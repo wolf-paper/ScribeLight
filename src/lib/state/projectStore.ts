@@ -16,11 +16,14 @@ export interface ProjectState {
 export class ProjectStore implements Readable<ProjectState> {
   private readonly state = writable<ProjectState>({ project: null, errors: {}, saveError: null });
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private saveQueue: Promise<void> = Promise.resolve();
+  private saveInFlight = false;
   readonly subscribe = this.state.subscribe;
 
   constructor(private readonly bridge: SaveBridge, private readonly id: () => string = () => crypto.randomUUID()) {}
 
   open(project: Project): void {
+    this.cancelRecovery();
     this.state.set({ project, errors: {}, saveError: null });
   }
 
@@ -79,10 +82,7 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   async flush(): Promise<void> {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
+    this.cancelRecovery();
     const project = get(this.state).project;
     if (project) await this.persist(project);
   }
@@ -104,10 +104,7 @@ export class ProjectStore implements Readable<ProjectState> {
       this.state.update((value) => ({ ...value, errors }));
       return false;
     }
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
+    this.cancelRecovery();
     const active = current.project.annotations.find((item) => item.id === current.project!.activeAnnotationId);
     const annotation: Annotation = {
       ...current.project.draft,
@@ -129,7 +126,7 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   private scheduleRecovery(): void {
-    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.cancelRecovery();
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
       const project = get(this.state).project;
@@ -138,6 +135,24 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   private async persist(project: Project): Promise<void> {
+    const request = this.saveInFlight
+      ? this.saveQueue.then(() => this.save(project))
+      : this.save(project);
+    this.saveInFlight = true;
+    this.saveQueue = request;
+    void request.then(() => {
+      if (this.saveQueue === request) this.saveInFlight = false;
+    });
+    await request;
+  }
+
+  private cancelRecovery(): void {
+    if (!this.saveTimer) return;
+    clearTimeout(this.saveTimer);
+    this.saveTimer = null;
+  }
+
+  private async save(project: Project): Promise<void> {
     try {
       await this.bridge.saveProject(project);
     } catch (error) {

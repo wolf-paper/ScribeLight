@@ -1,12 +1,23 @@
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProject } from '../domain/project';
+import type { Project } from '../domain/types';
 import { ProjectStore } from './projectStore';
 
 const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 };
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('ProjectStore', () => {
-  const bridge = { saveProject: vi.fn(async () => undefined) };
+  const bridge = { saveProject: vi.fn<(project: Project) => Promise<void>>(async () => undefined) };
 
   beforeEach(() => {
     bridge.saveProject.mockReset();
@@ -26,7 +37,14 @@ describe('ProjectStore', () => {
     await store.commitDraft('2026-01-01T00:00:01Z');
 
     expect(get(store).project!.annotations).toHaveLength(1);
-    expect(get(store).project!.annotations[0]).toMatchObject({ id, transcription: 'two' });
+    expect(get(store).project!.annotations[0]).toMatchObject({
+      id,
+      transcription: 'two',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:01Z'
+    });
+    vi.advanceTimersByTime(350);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
   });
 
   it('keeps an invalid draft local and exposes its field errors', async () => {
@@ -55,6 +73,59 @@ describe('ProjectStore', () => {
     await store.flush();
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(350);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('serializes a recovery write before the later commit snapshot', async () => {
+    const recovery = deferred<void>();
+    const saved = [] as ReturnType<typeof createProject>[];
+    bridge.saveProject.mockImplementation((project) => {
+      saved.push(project);
+      return saved.length === 1 ? recovery.promise : Promise.resolve();
+    });
+    const store = new ProjectStore(bridge, () => 'event-1');
+    store.open(createProject(audio));
+    store.patchDraft({ notes: 'recovery snapshot' });
+    vi.advanceTimersByTime(300);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+
+    store.patchDraft({ startMs: 10, endMs: 20, transcription: 'committed snapshot' });
+    const commit = store.commitDraft('2026-01-01T00:00:00Z');
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+
+    recovery.resolve();
+    await commit;
+
+    expect(saved).toHaveLength(2);
+    expect(saved[1].annotations).toMatchObject([{ id: 'event-1', transcription: 'committed snapshot' }]);
+  });
+
+  it('continues saving after a rejected request', async () => {
+    bridge.saveProject.mockRejectedValueOnce(new Error('disk full'));
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    store.patchDraft({ notes: 'failed save' });
+    await store.flush();
+    store.patchDraft({ notes: 'later save' });
+    await store.flush();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(get(store)).toMatchObject({
+      project: { draft: { notes: 'later save' } },
+      saveError: 'Error: disk full'
+    });
+  });
+
+  it('cancels recovery when opening another project', () => {
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    store.patchDraft({ notes: 'old project' });
+    store.open(createProject({ ...audio, canonicalPath: 'b.wav' }));
+
+    vi.advanceTimersByTime(350);
+
+    expect(bridge.saveProject).not.toHaveBeenCalled();
   });
 
   it('copies selection integer boundaries into the draft', () => {
