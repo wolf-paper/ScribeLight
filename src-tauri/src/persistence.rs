@@ -31,7 +31,7 @@ pub fn load_project_from(path: &Path) -> Result<Project, AppError> {
     Ok(project)
 }
 
-fn validate_schema_version(project: &Project) -> Result<(), AppError> {
+pub(crate) fn validate_schema_version(project: &Project) -> Result<(), AppError> {
     if project.schema_version != 1 {
         return Err(AppError::InvalidProject(format!(
             "unsupported schema version {}; expected 1",
