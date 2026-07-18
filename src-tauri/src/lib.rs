@@ -1,4 +1,6 @@
 mod commands;
+#[cfg(test)]
+mod configuration_tests;
 pub mod error;
 pub mod model;
 pub mod persistence;

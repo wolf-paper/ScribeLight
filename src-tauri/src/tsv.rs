@@ -120,6 +120,11 @@ fn label_for_id(
         .find(|definition| definition.id == id)
         .map(|definition| definition.label.clone())
         .ok_or_else(|| AppError::Tsv(format!("Unknown {field} id: {id}")))?;
+    if label.trim().is_empty() {
+        return Err(AppError::Tsv(format!(
+            "{field} label must not be empty or whitespace-only"
+        )));
+    }
     if label.contains('\t') {
         return Err(AppError::Tsv(format!(
             "{field} label contains a tab: {label}"
@@ -269,7 +274,7 @@ pub fn parse_tsv(text: &str, multiline_policy: MultilinePolicy) -> Result<Import
             }
             None
         } else {
-            if row.speaker.is_empty() || row.speaker.contains('\t') {
+            if row.speaker.trim().is_empty() || row.speaker.contains('\t') {
                 return Err(AppError::Tsv(
                     "Speaker labels must be non-empty and tab-free".into(),
                 ));
@@ -277,15 +282,20 @@ pub fn parse_tsv(text: &str, multiline_policy: MultilinePolicy) -> Result<Import
             append_unique(&mut speakers, row.speaker.clone());
             Some(row.speaker)
         };
-        let row_tags = row
-            .acoustic_tags
-            .split(';')
-            .filter(|tag| !tag.is_empty())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        if row_tags.iter().any(|tag| tag.contains('\t')) {
+        let row_tags = if row.acoustic_tags.is_empty() {
+            vec![]
+        } else {
+            row.acoustic_tags
+                .split(';')
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        if row_tags
+            .iter()
+            .any(|tag| tag.trim().is_empty() || tag.contains('\t'))
+        {
             return Err(AppError::Tsv(
-                "Acoustic tag labels cannot contain tabs".into(),
+                "Acoustic tag labels must be non-empty, non-whitespace, and tab-free".into(),
             ));
         }
         for tag in &row_tags {
@@ -414,6 +424,42 @@ mod tests {
         project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
         project.annotations[0].notes = "not\ta portable field".into();
         assert!(export_tsv(&project).is_err());
+    }
+
+    #[test]
+    fn rejects_blank_speaker_and_acoustic_tag_labels_on_export() {
+        let mut project = Project::fixture("a.wav");
+        project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
+        for label in ["", "  "] {
+            project.speakers[0].label = label.into();
+            assert!(export_tsv(&project).is_err(), "{label:?}");
+        }
+
+        project.speakers[0].label = "speaker_1".into();
+        project.annotations[0].acoustic_tag_ids = vec!["tag1".into()];
+        for label in ["", "  ", "tag\tname", "tag;name"] {
+            project.acoustic_tags = vec![LabelDefinition {
+                id: "tag1".into(),
+                label: label.into(),
+            }];
+            assert!(export_tsv(&project).is_err(), "{label:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_blank_imported_labels_and_empty_acoustic_tag_segments() {
+        for (speaker, tags) in [
+            ("  ", ""),
+            ("speaker_1", "  "),
+            ("speaker_1", ";tag_a"),
+            ("speaker_1", "tag_a;"),
+            ("speaker_1", "tag_a;;tag_b"),
+        ] {
+            let text = format!(
+                "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.100\t0.200\tspeech\tword\tintelligible\t{speaker}\tnone\thigh\t{tags}\t\n"
+            );
+            assert!(parse_tsv(&text, MultilinePolicy::Escape).is_err(), "{text}");
+        }
     }
 
     fn annotation(
