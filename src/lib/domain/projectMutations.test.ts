@@ -30,12 +30,28 @@ describe('project label mutations', () => {
     expect(removeSpeaker(project, used, reassigned).annotations[0].speakerId).toBe(reassigned);
   });
 
+  it('requires reassignment when only the draft references a speaker', () => {
+    const project = createProject(audio);
+    const used = project.speakers[0].id;
+    const reassigned = project.speakers[1].id;
+    expect(() => removeSpeaker(project, used)).toThrow('reassignment');
+    expect(removeSpeaker(project, used, reassigned).draft.speakerId).toBe(reassigned);
+  });
+
   it('removes a confirmed referenced tag from annotations', () => {
     const project = createProject(audio);
     const tagId = project.acousticTags[0].id;
     project.annotations.push({ ...project.draft, id: 'a', acousticTagIds: [tagId], startMs: 1, endMs: 2, createdAt: 'x', updatedAt: 'x' });
     expect(() => removeTag(project, tagId, false)).toThrow('confirmation');
     expect(removeTag(project, tagId, true).annotations[0].acousticTagIds).toEqual([]);
+  });
+
+  it('requires confirmation when only the draft references a tag', () => {
+    const project = createProject(audio);
+    const tagId = project.acousticTags[0].id;
+    project.draft.acousticTagIds = [tagId];
+    expect(() => removeTag(project, tagId, false)).toThrow('confirmation');
+    expect(removeTag(project, tagId, true).draft.acousticTagIds).toEqual([]);
   });
 
   it('rejects an invalid replacement speaker', () => {

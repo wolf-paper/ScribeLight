@@ -57,7 +57,7 @@ export function renameTag(project: Project, id: string, nextLabel: string): Proj
 }
 
 export function removeSpeaker(project: Project, id: string, reassignTo?: string): Project {
-  const referenced = project.annotations.some((annotation) => annotation.speakerId === id);
+  const referenced = project.annotations.some((annotation) => annotation.speakerId === id) || project.draft.speakerId === id;
   if (referenced && !reassignTo) throw new Error('Speaker reassignment is required');
   if (reassignTo && !project.speakers.some((speaker) => speaker.id === reassignTo && speaker.id !== id)) {
     throw new Error('Reassignment target does not exist');
@@ -71,7 +71,7 @@ export function removeSpeaker(project: Project, id: string, reassignTo?: string)
 }
 
 export function removeTag(project: Project, id: string, confirmed: boolean): Project {
-  const referenced = project.annotations.some((annotation) => annotation.acousticTagIds.includes(id));
+  const referenced = project.annotations.some((annotation) => annotation.acousticTagIds.includes(id)) || project.draft.acousticTagIds.includes(id);
   if (referenced && !confirmed) throw new Error('Tag removal requires confirmation');
   return {
     ...project,
