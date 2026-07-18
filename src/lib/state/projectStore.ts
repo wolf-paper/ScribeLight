@@ -81,6 +81,23 @@ export class ProjectStore implements Readable<ProjectState> {
     await this.persist(project);
   }
 
+  async mutateProject(mutation: (project: Project) => Project): Promise<boolean> {
+    const current = get(this.state).project;
+    if (!current) return false;
+    try {
+      const project = mutation(current);
+      this.state.set({ project, errors: {}, saveError: null });
+      await this.persist(project);
+      return true;
+    } catch (error) {
+      this.state.update((value) => ({
+        ...value,
+        saveError: error instanceof Error ? error.message : String(error)
+      }));
+      return false;
+    }
+  }
+
   async flush(): Promise<void> {
     this.cancelRecovery();
     const project = get(this.state).project;

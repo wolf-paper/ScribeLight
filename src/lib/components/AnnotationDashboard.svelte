@@ -3,6 +3,8 @@
   import { normalizeDraftForEventType } from '../domain/validation';
   import { formatTime } from '../domain/time';
   import type { EventType } from '../domain/types';
+  import AcousticTagManager from './AcousticTagManager.svelte';
+  import SpeakerManager from './SpeakerManager.svelte';
 
   export let store: ProjectStore;
 
@@ -85,6 +87,7 @@
         {/each}
       </select>
     </label>
+    <SpeakerManager {store} />
 
     <label>
       Transcription
@@ -138,6 +141,7 @@
         </label>
       {/each}
     </fieldset>
+    <AcousticTagManager {store} />
 
     <label>
       Notes
