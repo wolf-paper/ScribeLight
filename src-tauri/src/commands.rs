@@ -16,9 +16,9 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct AnalysisState {
-    active: Mutex<Option<Arc<AtomicBool>>>,
+    active: Arc<Mutex<Option<Arc<AtomicBool>>>>,
 }
 
 impl AnalysisState {
@@ -44,6 +44,63 @@ impl AnalysisState {
             active.store(true, Ordering::Release);
         }
         Ok(())
+    }
+
+    fn may_publish(&self, generation: &Arc<AtomicBool>) -> Result<bool, AppError> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::Audio("Analysis state lock poisoned".to_owned()))?;
+        Ok(!generation.load(Ordering::Acquire)
+            && active
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, generation)))
+    }
+
+    fn finish_if_current(
+        &self,
+        generation: &Arc<AtomicBool>,
+        action: impl FnOnce() -> Result<(), AppError>,
+    ) -> Result<bool, AppError> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::Audio("Analysis state lock poisoned".to_owned()))?;
+        if generation.load(Ordering::Acquire)
+            || !active
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, generation))
+        {
+            return Ok(false);
+        }
+        action()?;
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod analysis_state_tests {
+    use super::*;
+
+    #[test]
+    fn superseded_and_cancelled_generations_cannot_publish_or_commit() {
+        let state = AnalysisState::default();
+        let first = state.begin().unwrap();
+        assert!(state.may_publish(&first).unwrap());
+        let second = state.begin().unwrap();
+        assert!(!state.may_publish(&first).unwrap());
+        assert!(state.may_publish(&second).unwrap());
+        state.cancel().unwrap();
+        assert!(!state.may_publish(&second).unwrap());
+    }
+
+    #[test]
+    fn only_the_current_generation_can_finish_after_a_race() {
+        let state = AnalysisState::default();
+        let old = state.begin().unwrap();
+        let current = state.begin().unwrap();
+        assert!(!state.finish_if_current(&old, || Ok(())).unwrap());
+        assert!(state.finish_if_current(&current, || Ok(())).unwrap());
     }
 }
 
@@ -102,21 +159,39 @@ pub async fn analyze_audio(
     path: String,
 ) -> Result<PeakData, AppError> {
     let cancelled = state.begin()?;
+    let state = state.inner().clone();
     let cache_dir = app_data(&app)?.join("cache");
     tauri::async_runtime::spawn_blocking(move || {
         let source = Path::new(&path);
-        let identity = AudioDecoder::open(source)?.identity().clone();
+        let mut decoder = AudioDecoder::open(source)?;
+        let identity = decoder.identity().clone();
         if let Some(cached) = peaks::read_cache(&cache_dir, &identity)? {
-            return Ok::<PeakData, AppError>(cached);
-        }
-        let progress_app = app.clone();
-        let data = peaks::analyze_path(source, &cancelled, |value| {
-            let _ = progress_app.emit("analysis-progress", value);
-        })?;
-        if cancelled.load(Ordering::Acquire) {
+            if state.finish_if_current(&cancelled, || Ok(()))? {
+                return Ok::<PeakData, AppError>(cached);
+            }
             return Err(AppError::Audio("Waveform analysis cancelled".to_owned()));
         }
-        peaks::write_cache(&cache_dir, &identity, &data)?;
+        let progress_app = app.clone();
+        let progress_state = state.clone();
+        let data = peaks::analyze_decoder(&mut decoder, &cancelled, |value| {
+            if progress_state.may_publish(&cancelled).unwrap_or(false) {
+                let _ = progress_app.emit("analysis-progress", value);
+            }
+        })?;
+        let final_app = app.clone();
+        if !state.finish_if_current(&cancelled, || {
+            peaks::write_cache(&cache_dir, &identity, &data)?;
+            let _ = final_app.emit(
+                "analysis-progress",
+                crate::model::AnalysisProgress {
+                    processed_ms: identity.duration_ms,
+                    duration_ms: identity.duration_ms,
+                },
+            );
+            Ok(())
+        })? {
+            return Err(AppError::Audio("Waveform analysis cancelled".to_owned()));
+        }
         Ok::<PeakData, AppError>(data)
     })
     .await

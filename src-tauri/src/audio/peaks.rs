@@ -15,9 +15,17 @@ use std::{
 pub fn analyze_path(
     path: &Path,
     cancelled: &AtomicBool,
-    mut progress: impl FnMut(AnalysisProgress),
+    progress: impl FnMut(AnalysisProgress),
 ) -> Result<PeakData, AppError> {
     let mut decoder = AudioDecoder::open(path)?;
+    analyze_decoder(&mut decoder, cancelled, progress)
+}
+
+pub fn analyze_decoder(
+    decoder: &mut AudioDecoder,
+    cancelled: &AtomicBool,
+    mut progress: impl FnMut(AnalysisProgress),
+) -> Result<PeakData, AppError> {
     let identity = decoder.identity().clone();
     let channels = identity.channels as usize;
     let frames_per_peak = (identity.sample_rate / 100).max(1);
@@ -48,21 +56,20 @@ pub fn analyze_path(
             }
         }
         if last_report.elapsed() >= Duration::from_millis(100) {
-            progress(AnalysisProgress {
-                processed_ms: processed_frames.saturating_mul(1_000)
-                    / u64::from(identity.sample_rate),
-                duration_ms: identity.duration_ms,
-            });
+            let processed_ms =
+                processed_frames.saturating_mul(1_000) / u64::from(identity.sample_rate);
+            if processed_ms < identity.duration_ms {
+                progress(AnalysisProgress {
+                    processed_ms,
+                    duration_ms: identity.duration_ms,
+                });
+            }
             last_report = Instant::now();
         }
     }
     if bucket_frames > 0 {
         flush_bucket(&mut output, &mut minimum, &mut maximum);
     }
-    progress(AnalysisProgress {
-        processed_ms: identity.duration_ms,
-        duration_ms: identity.duration_ms,
-    });
     Ok(PeakData {
         duration_ms: identity.duration_ms,
         sample_rate: identity.sample_rate,
@@ -99,9 +106,29 @@ pub fn read_cache(
     if !path.exists() {
         return Ok(None);
     }
-    serde_json::from_slice(&fs::read(path)?)
-        .map(Some)
-        .map_err(|error| AppError::Audio(format!("Invalid waveform cache: {error}")))
+    let peaks: PeakData = serde_json::from_slice(&fs::read(path)?)
+        .map_err(|error| AppError::Audio(format!("Invalid waveform cache: {error}")))?;
+    validate_cache(&peaks, identity)?;
+    Ok(Some(peaks))
+}
+
+fn validate_cache(peaks: &PeakData, identity: &AudioIdentity) -> Result<(), AppError> {
+    let valid = peaks.duration_ms == identity.duration_ms
+        && peaks.sample_rate == identity.sample_rate
+        && peaks.frames_per_peak > 0
+        && peaks.channels.len() == usize::from(identity.channels)
+        && peaks.channels.iter().all(|channel| {
+            channel.len() % 2 == 0
+                && channel.len() <= ((identity.duration_ms / 1_000 + 2) as usize * 202)
+                && channel
+                    .iter()
+                    .all(|value| value.is_finite() && (-1.0..=1.0).contains(value))
+        });
+    valid.then_some(()).ok_or_else(|| {
+        AppError::Audio(
+            "Invalid waveform cache: peak data does not match audio identity".to_owned(),
+        )
+    })
 }
 
 pub fn write_cache(
@@ -172,16 +199,15 @@ mod tests {
     }
 
     #[test]
-    fn reports_completion_and_honors_cancellation() {
+    fn reports_throttled_progress_but_not_completion_and_honors_cancellation() {
         let (_directory, path) = write_wav(&vec![1_000_i16; 250], 1_000);
         let mut progress = Vec::new();
         let peaks =
             analyze_path(&path, &AtomicBool::new(false), |event| progress.push(event)).unwrap();
         assert!(!peaks.channels[0].is_empty());
-        assert_eq!(
-            progress.last().unwrap().processed_ms,
-            progress.last().unwrap().duration_ms
-        );
+        assert!(progress
+            .iter()
+            .all(|event| event.processed_ms < event.duration_ms));
 
         let cancelled = AtomicBool::new(true);
         let error = analyze_path(&path, &cancelled, |_| {}).unwrap_err();
@@ -221,5 +247,27 @@ mod tests {
         let error = read_cache(cache.path(), &identity).unwrap_err();
         assert!(error.to_string().contains("Invalid waveform cache"));
         assert_eq!(std::fs::read(&source).unwrap(), original);
+    }
+
+    #[test]
+    fn rejects_a_syntactically_valid_cache_with_wrong_identity_or_peak_shape() {
+        let (_directory, source) = write_wav(&[1_000_i16; 10], 1_000);
+        let cache = tempfile::tempdir().unwrap();
+        let identity = AudioDecoder::open(&source).unwrap().identity().clone();
+        let invalid = PeakData {
+            duration_ms: identity.duration_ms + 1,
+            sample_rate: identity.sample_rate,
+            frames_per_peak: 0,
+            channels: vec![vec![f32::NAN]],
+        };
+        std::fs::create_dir_all(cache.path()).unwrap();
+        std::fs::write(
+            cache_path(cache.path(), &identity),
+            serde_json::to_vec(&invalid).unwrap(),
+        )
+        .unwrap();
+
+        let error = read_cache(cache.path(), &identity).unwrap_err();
+        assert!(error.to_string().contains("Invalid waveform cache"));
     }
 }

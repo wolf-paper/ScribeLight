@@ -27,6 +27,7 @@ pub struct AudioDecoder {
     time_base: TimeBase,
     identity: AudioIdentity,
     total_frames: u64,
+    max_frames: u64,
     next_frame: u64,
     pending: Option<DecodedChunk>,
 }
@@ -64,6 +65,12 @@ impl AudioDecoder {
                 MetadataOptions::default(),
             )
             .map_err(audio_error)?;
+        let detected = format.format_info().short_name;
+        if (extension == "mp3" && detected != "mp3") || (extension == "wav" && detected != "wave") {
+            return Err(AppError::Audio(format!(
+                "File extension .{extension} does not match detected {detected} audio"
+            )));
+        }
         let track = format
             .default_track(TrackType::Audio)
             .ok_or_else(|| AppError::Audio("No audio track found".to_owned()))?;
@@ -99,11 +106,7 @@ impl AudioDecoder {
                     .map(|frames| frames.saturating_mul(1_000) / u64::from(sample_rate))
             })
             .ok_or_else(|| AppError::Audio("Audio duration is unknown".to_owned()))?;
-        if duration_ms > MAX_DURATION_MS {
-            return Err(AppError::Audio(
-                "Audio exceeds the 30-minute limit".to_owned(),
-            ));
-        }
+        let max_frames = u64::from(sample_rate) * 30 * 60;
         let total_frames = track.num_frames.unwrap_or_else(|| {
             (time_base
                 .calc_time_saturating(Timestamp::new(
@@ -113,6 +116,11 @@ impl AudioDecoder {
                 * f64::from(sample_rate))
             .round() as u64
         });
+        if total_frames > max_frames || duration_ms > MAX_DURATION_MS {
+            return Err(AppError::Audio(
+                "Audio exceeds the 30-minute limit".to_owned(),
+            ));
+        }
         if total_frames == 0 {
             return Err(AppError::Audio(
                 "Audio contains no playable frames".to_owned(),
@@ -136,6 +144,7 @@ impl AudioDecoder {
                 channels,
             },
             total_frames,
+            max_frames,
             next_frame: 0,
             pending: None,
         })
@@ -155,11 +164,11 @@ impl AudioDecoder {
         loop {
             let packet = match self.format.next_packet() {
                 Ok(Some(packet)) => packet,
-                Ok(None) => return Ok(None),
+                Ok(None) => return self.finish_stream(),
                 Err(SymphoniaError::IoError(error))
                     if error.kind() == std::io::ErrorKind::UnexpectedEof =>
                 {
-                    return Ok(None);
+                    return self.finish_stream();
                 }
                 Err(error) => return Err(audio_error(error)),
             };
@@ -180,12 +189,26 @@ impl AudioDecoder {
             }
             let start_frame = self.next_frame;
             self.next_frame = self.next_frame.saturating_add(frame_count);
+            if self.next_frame > self.max_frames {
+                return Err(AppError::Audio(
+                    "Audio exceeds the 30-minute limit".to_owned(),
+                ));
+            }
             return Ok(Some(DecodedChunk {
                 start_frame,
                 channels,
                 interleaved,
             }));
         }
+    }
+
+    fn finish_stream(&self) -> Result<Option<DecodedChunk>, AppError> {
+        if self.next_frame != self.total_frames {
+            return Err(AppError::Audio(
+                "Audio ended before its declared frame extent".to_owned(),
+            ));
+        }
+        Ok(None)
     }
 
     pub fn seek_exact(&mut self, target_frame: u64) -> Result<(), AppError> {
@@ -317,20 +340,41 @@ mod tests {
     }
 
     #[test]
-    fn exact_seek_matches_the_same_frames_from_sequential_decode() {
+    fn exact_seeks_match_a_true_sequential_baseline_at_multiple_offsets() {
         let mut sequential = AudioDecoder::open(&fixture()).unwrap();
-        let decoded_from_zero = sequential.decode_range(0, 2_128).unwrap();
-        let channels = decoded_from_zero.channels as usize;
-        let expected = decoded_from_zero.interleaved[2_000 * channels..2_128 * channels].to_vec();
-
-        let mut sought = AudioDecoder::open(&fixture()).unwrap();
-        let actual = sought.decode_range(2_000, 2_128).unwrap();
-
-        assert_eq!(actual.start_frame, 2_000);
-        assert_eq!(actual.interleaved.len(), expected.len());
-        for (left, right) in actual.interleaved.iter().zip(expected) {
-            assert!((left - right).abs() < 1e-6);
+        let channels = sequential.identity().channels as usize;
+        let mut baseline = Vec::new();
+        while let Some(chunk) = sequential.decode_next().unwrap() {
+            baseline.extend(chunk.interleaved);
         }
+
+        for (start, end) in [(0, 128), (1_000, 1_128), (2_000, 2_128), (3_456, 3_584)] {
+            let mut sought = AudioDecoder::open(&fixture()).unwrap();
+            let actual = sought.decode_range(start, end).unwrap();
+            let expected = &baseline[start as usize * channels..end as usize * channels];
+            assert_eq!(actual.start_frame, start);
+            assert_eq!(actual.interleaved.len(), expected.len());
+            for (left, right) in actual.interleaved.iter().zip(expected) {
+                assert!((left - right).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn decode_range_preserves_the_packet_tail_for_the_next_read() {
+        let mut expected_decoder = AudioDecoder::open(&fixture()).unwrap();
+        let expected = expected_decoder.decode_range(0, 2_048).unwrap();
+
+        let mut decoder = AudioDecoder::open(&fixture()).unwrap();
+        let first = decoder.decode_range(0, 1_337).unwrap();
+        let tail = decoder.decode_next().unwrap().unwrap();
+        assert_eq!(tail.start_frame, 1_337);
+        assert_eq!(
+            &expected.interleaved[1_337 * usize::from(expected.channels)..],
+            &tail.interleaved
+                [..expected.interleaved.len() - 1_337 * usize::from(expected.channels)]
+        );
+        assert_eq!(first.interleaved.len(), 1_337 * usize::from(first.channels));
     }
 
     #[test]
@@ -355,5 +399,76 @@ mod tests {
         assert_eq!(range.interleaved.len(), 2);
         assert!(decoder.decode_range(10, 10).is_err());
         assert!(decoder.decode_range(9, 11).is_err());
+    }
+
+    #[test]
+    fn rejects_a_truncated_wav_before_reporting_end_of_stream() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("truncated.wav");
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 1_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        for value in 0_i16..10 {
+            writer.write_sample(value).unwrap();
+        }
+        writer.finalize().unwrap();
+        let original_length = std::fs::metadata(&path).unwrap().len();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(original_length - 1)
+            .unwrap();
+
+        let mut decoder = AudioDecoder::open(&path).unwrap();
+        loop {
+            match decoder.decode_next() {
+                Ok(Some(_)) => continue,
+                Ok(None) => panic!("truncated WAV was accepted as end of stream"),
+                Err(_) => break,
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_a_wav_one_frame_over_the_thirty_minute_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let exact = directory.path().join("exact.wav");
+        let too_long = directory.path().join("too-long.wav");
+        write_sparse_pcm_wav(&exact, 44_100 * 30 * 60);
+        write_sparse_pcm_wav(&too_long, 44_100 * 30 * 60 + 1);
+
+        assert!(AudioDecoder::open(&exact).is_ok());
+        assert!(AudioDecoder::open(&too_long).is_err());
+    }
+
+    #[test]
+    fn rejects_mp3_content_renamed_to_wav() {
+        let directory = tempfile::tempdir().unwrap();
+        let renamed = directory.path().join("renamed.wav");
+        std::fs::copy(fixture(), &renamed).unwrap();
+        assert!(AudioDecoder::open(&renamed).is_err());
+    }
+
+    fn write_sparse_pcm_wav(path: &Path, frames: u32) {
+        let data_bytes = frames * 2;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16_u32.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&1_u16.to_le_bytes());
+        bytes.extend_from_slice(&44_100_u32.to_le_bytes());
+        bytes.extend_from_slice(&(44_100_u32 * 2).to_le_bytes());
+        bytes.extend_from_slice(&2_u16.to_le_bytes());
+        bytes.extend_from_slice(&16_u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_bytes.to_le_bytes());
+        std::fs::write(path, bytes).unwrap();
     }
 }
