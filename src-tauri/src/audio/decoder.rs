@@ -154,6 +154,11 @@ impl AudioDecoder {
         &self.identity
     }
 
+    pub fn verify_duration_to_end(&mut self) -> Result<(), AppError> {
+        while self.decode_next()?.is_some() {}
+        Ok(())
+    }
+
     fn timestamp_frame(&self, timestamp: symphonia::core::units::Timestamp) -> u64 {
         (self.time_base.calc_time_saturating(timestamp).as_secs_f64()
             * f64::from(self.identity.sample_rate))
@@ -452,6 +457,12 @@ mod tests {
         let renamed = directory.path().join("renamed.wav");
         std::fs::copy(fixture(), &renamed).unwrap();
         assert!(AudioDecoder::open(&renamed).is_err());
+    }
+
+    #[test]
+    fn verifies_mp3_duration_by_streaming_without_retaining_pcm() {
+        let mut decoder = AudioDecoder::open(&fixture()).unwrap();
+        decoder.verify_duration_to_end().unwrap();
     }
 
     fn write_sparse_pcm_wav(path: &Path, frames: u32) {

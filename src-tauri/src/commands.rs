@@ -155,6 +155,19 @@ mod analysis_state_tests {
             }
         ));
     }
+
+    #[test]
+    fn restated_identity_detects_a_changed_temp_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source.wav");
+        std::fs::write(&path, b"one").unwrap();
+        let initial = source_identity(&path).unwrap();
+        std::fs::write(&path, b"source changed").unwrap();
+        assert!(!same_source_identity(
+            &initial,
+            &source_identity(&path).unwrap()
+        ));
+    }
 }
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, AppError> {
@@ -163,11 +176,43 @@ fn app_data(app: &AppHandle) -> Result<PathBuf, AppError> {
         .map_err(|error| AppError::Io(error.to_string()))
 }
 
-#[cfg(test)]
 fn same_source_identity(left: &AudioIdentity, right: &AudioIdentity) -> bool {
     left.canonical_path == right.canonical_path
         && left.size == right.size
         && left.modified_ms == right.modified_ms
+}
+
+fn source_identity(path: &Path) -> Result<AudioIdentity, AppError> {
+    let canonical = path.canonicalize()?;
+    let metadata = std::fs::metadata(&canonical)?;
+    let modified_ms = metadata
+        .modified()
+        .map_err(|error| AppError::Audio(format!("Cannot read source modification time: {error}")))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| {
+            AppError::Audio("Source modification time predates the Unix epoch".to_owned())
+        })?
+        .as_millis()
+        .try_into()
+        .map_err(|_| AppError::Audio("Source modification time is out of range".to_owned()))?;
+    Ok(AudioIdentity {
+        canonical_path: canonical.to_string_lossy().into_owned(),
+        size: metadata.len(),
+        modified_ms,
+        duration_ms: 0,
+        sample_rate: 0,
+        channels: 0,
+    })
+}
+
+fn ensure_source_unchanged(path: &Path, original: &AudioIdentity) -> Result<(), AppError> {
+    if same_source_identity(original, &source_identity(path)?) {
+        Ok(())
+    } else {
+        Err(AppError::Audio(
+            "Source audio changed during analysis; retry the operation".to_owned(),
+        ))
+    }
 }
 
 #[tauri::command]
@@ -206,7 +251,14 @@ pub fn write_tsv(path: String, project: Project) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn inspect_audio(path: String) -> Result<AudioIdentity, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
-        AudioDecoder::open(Path::new(&path)).map(|decoder| decoder.identity().clone())
+        let mut decoder = AudioDecoder::open(Path::new(&path))?;
+        if Path::new(&path)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("mp3"))
+        {
+            decoder.verify_duration_to_end()?;
+        }
+        Ok::<AudioIdentity, AppError>(decoder.identity().clone())
     })
     .await
     .map_err(|error| AppError::Audio(error.to_string()))?
@@ -226,6 +278,7 @@ pub async fn analyze_audio(
         let mut decoder = AudioDecoder::open(source)?;
         let identity = decoder.identity().clone();
         if let Some(cached) = peaks::read_cache(&cache_dir, &identity)? {
+            ensure_source_unchanged(source, &identity)?;
             if state.finish_if_current(&cancelled, || Ok(()))? {
                 return Ok::<PeakData, AppError>(cached);
             }
@@ -240,6 +293,7 @@ pub async fn analyze_audio(
         })?;
         let final_app = app.clone();
         if !state.finish_if_current(&cancelled, || {
+            ensure_source_unchanged(source, &identity)?;
             peaks::write_cache(&cache_dir, &identity, &data)?;
             let _ = final_app.emit(
                 "analysis-progress",
