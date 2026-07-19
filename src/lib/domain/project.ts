@@ -33,26 +33,34 @@ export function createProject(audioIdentity: AudioIdentity): Project {
   };
 }
 
-function requireUniqueLabel(items: LabelDefinition[], nextLabel: string, exceptId?: string): string {
+function requireUniqueLabel(
+  items: LabelDefinition[],
+  nextLabel: string,
+  kind: 'speakers' | 'acousticTags',
+  exceptId?: string
+): string {
   const normalized = nextLabel.trim();
   if (!normalized) throw new Error('Label cannot be empty');
   if (normalized === 'none') throw new Error('The label none is reserved');
+  const labelKind = kind === 'speakers' ? 'Speaker' : 'Acoustic tag';
+  if (normalized.includes('\t')) throw new Error(`${labelKind} labels cannot contain tabs`);
+  if (kind === 'acousticTags' && normalized.includes(';')) throw new Error('Acoustic tag labels cannot contain semicolons');
   if (items.some((item) => item.id !== exceptId && item.label === normalized)) throw new Error('Label must be unique');
   return normalized;
 }
 
 export function addLabel(project: Project, kind: 'speakers' | 'acousticTags', nextLabel: string): Project {
-  const value = requireUniqueLabel(project[kind], nextLabel);
+  const value = requireUniqueLabel(project[kind], nextLabel, kind);
   return { ...project, [kind]: [...project[kind], label(value)] };
 }
 
 export function renameSpeaker(project: Project, id: string, nextLabel: string): Project {
-  const value = requireUniqueLabel(project.speakers, nextLabel, id);
+  const value = requireUniqueLabel(project.speakers, nextLabel, 'speakers', id);
   return { ...project, speakers: project.speakers.map((item) => item.id === id ? { ...item, label: value } : item) };
 }
 
 export function renameTag(project: Project, id: string, nextLabel: string): Project {
-  const value = requireUniqueLabel(project.acousticTags, nextLabel, id);
+  const value = requireUniqueLabel(project.acousticTags, nextLabel, 'acousticTags', id);
   return { ...project, acousticTags: project.acousticTags.map((item) => item.id === id ? { ...item, label: value } : item) };
 }
 

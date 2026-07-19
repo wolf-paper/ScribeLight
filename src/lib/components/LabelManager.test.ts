@@ -67,6 +67,23 @@ describe('SpeakerManager', () => {
     expect(get(store).saveError).toBe('The label none is reserved');
     expect(screen.getByRole('alert')).toHaveTextContent('The label none is reserved');
   });
+
+  it('rejects tabs inline when adding and renaming speakers', async () => {
+    const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
+    store.open(createProject(audio));
+    render(SpeakerManager, { store });
+
+    await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'guest\tname' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add speaker' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Speaker labels cannot contain tabs');
+
+    const first = get(store).project!.speakers[0];
+    const rename = screen.getByLabelText(`Rename ${first.label}`);
+    await fireEvent.input(rename, { target: { value: 'host\tname' } });
+    await fireEvent.blur(rename);
+    expect(screen.getByRole('alert')).toHaveTextContent('Speaker labels cannot contain tabs');
+    expect(get(store).project!.speakers[0]).toEqual(first);
+  });
 });
 
 describe('AcousticTagManager', () => {
@@ -102,5 +119,25 @@ describe('AcousticTagManager', () => {
     expect(get(store).project).toMatchObject({ annotations: [{ acousticTagIds: [] }], draft: { acousticTagIds: [] } });
     expect(get(store).project!.acousticTags.map((item) => item.id)).not.toContain(tag.id);
     expect(confirm).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['tab', 'room\ttone', 'Acoustic tag labels cannot contain tabs'],
+    ['semicolon', 'music;effects', 'Acoustic tag labels cannot contain semicolons']
+  ])('rejects a %s inline when adding and renaming acoustic tags', async (_kind, invalid, message) => {
+    const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
+    store.open(createProject(audio));
+    render(AcousticTagManager, { store });
+
+    await fireEvent.input(screen.getByLabelText('New acoustic tag'), { target: { value: invalid } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add acoustic tag' }));
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+
+    const first = get(store).project!.acousticTags[0];
+    const rename = screen.getByLabelText(`Rename ${first.label}`);
+    await fireEvent.input(rename, { target: { value: invalid } });
+    await fireEvent.blur(rename);
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    expect(get(store).project!.acousticTags[0]).toEqual(first);
   });
 });

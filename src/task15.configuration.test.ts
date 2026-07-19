@@ -31,4 +31,14 @@ describe('Task 15 release configuration', () => {
     expect(fixture).toContain('\tはい\t');
     expect(fixture).not.toContain('\uFFFD');
   });
+
+  it('starts and constrains the native window at the layout minimum width', () => {
+    const configuration = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')) as {
+      app: { windows: Array<{ width?: number; minWidth?: number }> };
+    };
+    const window = configuration.app.windows[0];
+
+    expect(window.width).toBeGreaterThanOrEqual(900);
+    expect(window.minWidth).toBeGreaterThanOrEqual(900);
+  });
 });

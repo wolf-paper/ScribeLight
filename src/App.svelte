@@ -19,7 +19,7 @@
   import TimelineWorkspace from './lib/components/TimelineWorkspace.svelte';
   import { mergeImportedTsv } from './lib/domain/importTsv';
   import { createProject } from './lib/domain/project';
-  import type { AnnotationDraft, AudioIdentity, Project, Selection } from './lib/domain/types';
+  import type { AnnotationDraft, AudioIdentity, MultilinePolicy, Project, Selection } from './lib/domain/types';
   import { validateDraft } from './lib/domain/validation';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
@@ -485,6 +485,15 @@
     if (!succeeded) persistentError = get(projectStore).saveError ?? 'The display setting could not be saved';
   }
 
+  async function setMultilinePolicy(multilinePolicy: MultilinePolicy): Promise<void> {
+    if (transitionBusy || closePromise) return;
+    const succeeded = await projectStore.mutateProject((value) => ({
+      ...value,
+      exportSettings: { ...value.exportSettings, multilinePolicy }
+    }));
+    if (!succeeded) persistentError = get(projectStore).saveError ?? 'The multiline export setting could not be saved';
+  }
+
   function setSelection(selection: Selection): void {
     if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
@@ -559,8 +568,8 @@
   }
 
   function requestClose(event: CloseRequestEvent): Promise<void> {
-    if (closePromise) return closePromise;
     event.preventDefault();
+    if (closePromise) return closePromise;
     const attempt = shutdown();
     const shared = attempt.then(() => undefined);
     closePromise = shared;
@@ -607,6 +616,7 @@
     togglePlay,
     toggleLoop,
     toggleFormat: () => void toggleFormat(),
+    setMultilinePolicy: (value: MultilinePolicy) => void setMultilinePolicy(value),
     exportTsv: () => void exportTsv(),
     cancelAnalysis: () => void cancelAnalysis(),
     setVolume: (value: number) => {
@@ -626,6 +636,7 @@
     loopEnabled={playback.loopRange !== null}
     {canLoop}
     format={project?.displayFormat ?? 'seconds'}
+    multilinePolicy={project?.exportSettings.multilinePolicy ?? 'escape'}
     volume={playback.volume}
     {analysisPercent}
     busy={transitionBusy}

@@ -64,6 +64,15 @@ describe('App', () => {
     });
 
     await openClip();
+    const multilinePolicy = screen.getByRole('combobox', { name: 'Multiline export policy' });
+    expect(multilinePolicy).toHaveValue('escape');
+    expect(multilinePolicy).toHaveTextContent('Escape line breaks as \\n');
+    expect(multilinePolicy).toHaveTextContent('Replace line breaks with spaces');
+    expect(multilinePolicy).toHaveTextContent('Preserve line breaks in quoted fields');
+    await fireEvent.change(multilinePolicy, { target: { value: 'space' } });
+    await waitFor(() => expect(bridge.saveProject).toHaveBeenCalledWith(expect.objectContaining({
+      exportSettings: { multilinePolicy: 'space' }
+    })));
     expect(screen.getByTestId('timeline-content').children).toHaveLength(4);
     await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '250' } });
@@ -79,11 +88,13 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(audio).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toHaveValue('space');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Import TSV' })).toBeEnabled());
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     expect(await screen.findByText('imported')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
     expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
+      exportSettings: { multilinePolicy: 'space' },
       annotations: expect.arrayContaining([expect.objectContaining({ transcription: 'うん!' }), expect.objectContaining({ transcription: 'imported' })])
     }));
     await waitFor(() => expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations'));
@@ -203,6 +214,7 @@ describe('App', () => {
     expect(screen.getByLabelText('Notes')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Show clock time' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
     expect(screen.getByLabelText('Volume')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeDisabled();
@@ -510,7 +522,7 @@ describe('App', () => {
     await Promise.all([first.result, second.result]);
 
     expect(first.event.preventDefault).toHaveBeenCalledTimes(1);
-    expect(second.event.preventDefault).not.toHaveBeenCalled();
+    expect(second.event.preventDefault).toHaveBeenCalledTimes(1);
     expect(bridge.saveProject).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ notes: 'flush me' }) }));
     expect(bridge.audioClose).toHaveBeenCalledTimes(1);
     expect(progressUnlisten).toHaveBeenCalledTimes(1);

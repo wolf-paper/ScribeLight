@@ -21,6 +21,20 @@ describe('project label mutations', () => {
     expect(project.speakers).toHaveLength(3);
   });
 
+  it('rejects tabs when adding or renaming speakers', () => {
+    const project = createProject(audio);
+    expect(() => addLabel(project, 'speakers', 'guest\tname')).toThrow('Speaker labels cannot contain tabs');
+    expect(() => renameSpeaker(project, project.speakers[0].id, 'guest\tname')).toThrow('Speaker labels cannot contain tabs');
+  });
+
+  it('rejects tabs and semicolons when adding or renaming acoustic tags', () => {
+    const project = createProject(audio);
+    for (const invalid of ['room\ttone', 'music;effects']) {
+      expect(() => addLabel(project, 'acousticTags', invalid)).toThrow(/Acoustic tag labels cannot contain (tabs|semicolons)/);
+      expect(() => renameTag(project, project.acousticTags[0].id, invalid)).toThrow(/Acoustic tag labels cannot contain (tabs|semicolons)/);
+    }
+  });
+
   it('requires speaker reassignment when referenced', () => {
     const project = createProject(audio);
     const used = project.speakers[0].id;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TimeDisplayFormat } from '../domain/types';
+  import type { MultilinePolicy, TimeDisplayFormat } from '../domain/types';
 
   interface Actions {
     open(): void;
@@ -7,6 +7,7 @@
     togglePlay(): void;
     toggleLoop(): void;
     toggleFormat(): void;
+    setMultilinePolicy(value: MultilinePolicy): void;
     exportTsv(): void;
     cancelAnalysis(): void;
     setVolume(value: number): void;
@@ -18,6 +19,7 @@
     loopEnabled: boolean;
     canLoop: boolean;
     format: TimeDisplayFormat;
+    multilinePolicy: MultilinePolicy;
     volume?: number;
     analysisPercent?: number | null;
     busy?: boolean;
@@ -25,7 +27,7 @@
   }
 
   let {
-    filename, playing, loopEnabled, canLoop, format, volume = 1,
+    filename, playing, loopEnabled, canLoop, format, multilinePolicy, volume = 1,
     analysisPercent = null, busy = false, actions
   }: Props = $props();
 </script>
@@ -60,6 +62,18 @@
   <button type="button" disabled={!filename || busy} aria-label={format === 'seconds' ? 'Show clock time' : 'Show decimal seconds'} onclick={actions.toggleFormat}>
     {format === 'seconds' ? 'mm:ss.mmm' : 'seconds.mmm'}
   </button>
+  <label class="multiline-policy">
+    <span>Multiline export policy</span>
+    <select
+      value={multilinePolicy}
+      disabled={!filename || busy}
+      onchange={(event) => actions.setMultilinePolicy((event.currentTarget as HTMLSelectElement).value as MultilinePolicy)}
+    >
+      <option value="escape">Escape line breaks as \n</option>
+      <option value="space">Replace line breaks with spaces</option>
+      <option value="quoted">Preserve line breaks in quoted fields</option>
+    </select>
+  </label>
   <button type="button" disabled={!filename || busy} onclick={actions.importTsv}>Import TSV</button>
   <button type="button" disabled={!filename || busy} onclick={actions.exportTsv}>Export TSV</button>
   {#if analysisPercent !== null}

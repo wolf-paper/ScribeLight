@@ -7,6 +7,11 @@ interface SaveBridge {
   saveProject(project: Project): Promise<void>;
 }
 
+const draftFields: readonly (keyof AnnotationDraft)[] = [
+  'startMs', 'endMs', 'eventType', 'transcription', 'intelligibility',
+  'speakerId', 'overlap', 'confidence', 'acousticTagIds', 'notes'
+];
+
 export interface ProjectState {
   project: Project | null;
   errors: FieldErrors;
@@ -21,12 +26,23 @@ export class ProjectStore implements Readable<ProjectState> {
   private mutationQueue: Promise<void> = Promise.resolve();
   private mutationInFlight = false;
   private mutationsBlocked = false;
+  private projectRevision = 0;
+  private draftFieldRevisions: Record<keyof AnnotationDraft, number> = {
+    startMs: 0, endMs: 0, eventType: 0, transcription: 0, intelligibility: 0,
+    speakerId: 0, overlap: 0, confidence: 0, acousticTagIds: 0, notes: 0
+  };
+  private selectionRevision = 0;
+  private activeAnnotationRevision = 0;
   readonly subscribe = this.state.subscribe;
 
   constructor(private readonly bridge: SaveBridge, private readonly id: () => string = () => crypto.randomUUID()) {}
 
   open(project: Project): void {
     this.cancelRecovery();
+    this.projectRevision += 1;
+    this.markDraftFields(draftFields);
+    this.selectionRevision += 1;
+    this.activeAnnotationRevision += 1;
     this.state.update((value) => ({ project, errors: {}, saveError: value.saveError }));
   }
 
@@ -36,12 +52,15 @@ export class ProjectStore implements Readable<ProjectState> {
 
   patchDraft(patch: Partial<AnnotationDraft>): void {
     if (this.mutationsBlocked) return;
+    this.markDraftFields(Object.keys(patch) as (keyof AnnotationDraft)[]);
     this.updateProject((project) => ({ ...project, draft: { ...project.draft, ...patch } }));
     this.scheduleRecovery();
   }
 
   setSelection(selection: Selection | null): void {
     if (this.mutationsBlocked) return;
+    this.selectionRevision += 1;
+    if (selection) this.markDraftFields(['startMs', 'endMs']);
     this.updateProject((project) => ({
       ...project,
       activeSelection: selection,
@@ -52,6 +71,9 @@ export class ProjectStore implements Readable<ProjectState> {
 
   selectAnnotation(id: string): void {
     if (this.mutationsBlocked) return;
+    this.markDraftFields(draftFields);
+    this.selectionRevision += 1;
+    this.activeAnnotationRevision += 1;
     this.updateProject((project) => {
       const annotation = project.annotations.find((item) => item.id === id);
       if (!annotation) return project;
@@ -107,6 +129,9 @@ export class ProjectStore implements Readable<ProjectState> {
 
   clearDraft(): void {
     if (this.mutationsBlocked) return;
+    this.markDraftFields(draftFields);
+    this.selectionRevision += 1;
+    this.activeAnnotationRevision += 1;
     this.updateProject((project) => ({
       ...project,
       activeAnnotationId: null,
@@ -142,12 +167,23 @@ export class ProjectStore implements Readable<ProjectState> {
     this.state.update((value) => value.project ? { ...value, project: update(value.project), errors: {} } : value);
   }
 
+  private markDraftFields(fields: readonly (keyof AnnotationDraft)[]): void {
+    for (const field of fields) this.draftFieldRevisions[field] += 1;
+  }
+
   private scheduleRecovery(): void {
     this.cancelRecovery();
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      const project = get(this.state).project;
-      if (project) void this.persist(project);
+      if (!this.mutationInFlight) {
+        const project = get(this.state).project;
+        if (project) void this.persist(project);
+        return;
+      }
+      void this.mutationQueue.then(() => {
+        const project = get(this.state).project;
+        if (project) void this.persist(project);
+      });
     }, 300);
   }
 
@@ -180,6 +216,10 @@ export class ProjectStore implements Readable<ProjectState> {
   private async applyMutation(mutation: (project: Project) => Project | null): Promise<boolean> {
     const current = get(this.state).project;
     if (!current) return false;
+    const projectRevision = this.projectRevision;
+    const draftFieldRevisions = { ...this.draftFieldRevisions };
+    const selectionRevision = this.selectionRevision;
+    const activeAnnotationRevision = this.activeAnnotationRevision;
     let candidate: Project | null;
     try {
       candidate = mutation(current);
@@ -192,7 +232,39 @@ export class ProjectStore implements Readable<ProjectState> {
     }
     if (!candidate) return false;
     if (!await this.persist(candidate)) return false;
-    this.state.set({ project: candidate, errors: {}, saveError: null });
+    if (this.projectRevision !== projectRevision) return false;
+    const latest = get(this.state).project;
+    if (!latest) return false;
+    const draftChanged = (field: keyof AnnotationDraft): boolean =>
+      this.draftFieldRevisions[field] !== draftFieldRevisions[field];
+    const latestSpeakerId = draftChanged('speakerId') ? latest.draft.speakerId : candidate.draft.speakerId;
+    const speakerId = latestSpeakerId === null || candidate.speakers.some((speaker) => speaker.id === latestSpeakerId)
+      ? latestSpeakerId
+      : candidate.draft.speakerId;
+    const acousticTagIds = draftChanged('acousticTagIds')
+      ? latest.draft.acousticTagIds.filter((id) => candidate.acousticTags.some((tag) => tag.id === id))
+      : candidate.draft.acousticTagIds;
+    const draft: AnnotationDraft = {
+      startMs: draftChanged('startMs') ? latest.draft.startMs : candidate.draft.startMs,
+      endMs: draftChanged('endMs') ? latest.draft.endMs : candidate.draft.endMs,
+      eventType: draftChanged('eventType') ? latest.draft.eventType : candidate.draft.eventType,
+      transcription: draftChanged('transcription') ? latest.draft.transcription : candidate.draft.transcription,
+      intelligibility: draftChanged('intelligibility') ? latest.draft.intelligibility : candidate.draft.intelligibility,
+      speakerId,
+      overlap: draftChanged('overlap') ? latest.draft.overlap : candidate.draft.overlap,
+      confidence: draftChanged('confidence') ? latest.draft.confidence : candidate.draft.confidence,
+      acousticTagIds,
+      notes: draftChanged('notes') ? latest.draft.notes : candidate.draft.notes
+    };
+    const published: Project = {
+      ...candidate,
+      draft,
+      activeSelection: this.selectionRevision === selectionRevision ? candidate.activeSelection : latest.activeSelection,
+      activeAnnotationId: this.activeAnnotationRevision === activeAnnotationRevision
+        ? candidate.activeAnnotationId
+        : latest.activeAnnotationId
+    };
+    this.state.set({ project: published, errors: {}, saveError: null });
     return true;
   }
 

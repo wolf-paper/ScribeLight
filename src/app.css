@@ -35,6 +35,8 @@ button.active, button[aria-pressed="true"] { background: #315b91; border-color: 
 .filename { min-width: 12rem; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .volume-control { display: flex; align-items: center; gap: .35rem; }
 .volume-control input { width: 7rem; }
+.multiline-policy { display: flex; align-items: center; gap: .35rem; }
+.multiline-policy select { max-width: 13rem; }
 .clip-toolbar progress { width: 7rem; accent-color: #69a5ff; }
 .app-status { min-height: 1.6rem; padding: .2rem .75rem 0; color: #b9c9df; }
 .empty-state { display: grid; min-height: 60vh; place-items: center; color: #9da9b8; }

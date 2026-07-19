@@ -236,6 +236,87 @@ describe('ProjectStore', () => {
     expect(bridge.saveProject.mock.calls[1][0].draft.notes).toBe('first second');
   });
 
+  it('preserves newer draft and selection edits while a committed mutation save is unresolved', async () => {
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+
+    const mutation = store.mutateProject((project) => ({ ...project, displayFormat: 'clock' }));
+    store.patchDraft({ notes: 'typed while saving' });
+    store.setSelection({ startMs: 12, endMs: 34 });
+    await vi.advanceTimersByTimeAsync(300);
+
+    mutationSave.resolve();
+    await expect(mutation).resolves.toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(get(store).project).toMatchObject({
+      displayFormat: 'clock',
+      activeSelection: { startMs: 12, endMs: 34 },
+      draft: { startMs: 12, endMs: 34, notes: 'typed while saving' }
+    });
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      displayFormat: 'clock',
+      activeSelection: { startMs: 12, endMs: 34 },
+      draft: expect.objectContaining({ startMs: 12, endMs: 34, notes: 'typed while saving' })
+    }));
+  });
+
+  it('merges an unrelated newer draft field without restoring a reference removed by the committed mutation', async () => {
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    const originalSpeaker = get(store).project!.speakers[0];
+    const replacementSpeaker = get(store).project!.speakers[1];
+
+    const mutation = store.mutateProject((project) => ({
+      ...project,
+      speakers: project.speakers.filter((speaker) => speaker.id !== originalSpeaker.id),
+      draft: { ...project.draft, speakerId: replacementSpeaker.id }
+    }));
+    store.patchDraft({ notes: 'typed while removing a speaker' });
+    mutationSave.resolve();
+
+    await expect(mutation).resolves.toBe(true);
+    expect(get(store).project).toMatchObject({
+      draft: { speakerId: replacementSpeaker.id, notes: 'typed while removing a speaker' }
+    });
+    expect(get(store).project!.speakers.map((speaker) => speaker.id)).not.toContain(originalSpeaker.id);
+  });
+
+  it('keeps newer draft edits after a committed mutation save fails and includes them in recovery', async () => {
+    const failedSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => failedSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+
+    const failedMutation = store.mutateProject((project) => ({ ...project, displayFormat: 'clock' }));
+    store.patchDraft({ notes: 'recover after failure' });
+    failedSave.reject(new Error('disk full'));
+
+    await expect(failedMutation).resolves.toBe(false);
+    expect(get(store).project).toMatchObject({
+      displayFormat: 'seconds',
+      draft: { notes: 'recover after failure' }
+    });
+
+    await expect(store.mutateProject((project) => ({
+      ...project,
+      exportSettings: { multilinePolicy: 'quoted' }
+    }))).resolves.toBe(true);
+    expect(get(store).project).toMatchObject({
+      displayFormat: 'seconds',
+      draft: { notes: 'recover after failure' },
+      exportSettings: { multilinePolicy: 'quoted' }
+    });
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      draft: expect.objectContaining({ notes: 'recover after failure' }),
+      exportSettings: { multilinePolicy: 'quoted' }
+    }));
+  });
+
   it('waits for an already-started committed mutation before flushing its published project', async () => {
     const mutationSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
