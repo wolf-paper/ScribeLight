@@ -25,15 +25,44 @@ async function replaceSequentially(input: HTMLElement, value: string): Promise<v
 }
 
 describe('AnnotationDashboard', () => {
-  it('submits with Enter but not Shift+Enter', async () => {
+  it('renders the Selection inspector without label managers', () => {
+    setup('clock');
+
+    expect(screen.getByRole('region', { name: 'Selection inspector' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Transcription')).toBeInTheDocument();
+    expect(screen.getByLabelText('Selection duration')).toHaveTextContent('00:00.010');
+    expect(screen.queryByLabelText('Speaker manager')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Acoustic tag manager')).not.toBeInTheDocument();
+  });
+
+  it('renders every canonical intelligibility value with a human-readable label', () => {
+    setup();
+
+    expect(screen.getByRole('option', { name: 'Highly intelligible' })).toHaveValue('highly_intelligible');
+    expect(screen.getByRole('option', { name: 'Partially intelligible' })).toHaveValue('partially_intelligible');
+    expect(screen.getByRole('option', { name: 'Unintelligible' })).toHaveValue('unintelligible');
+    expect(screen.getByRole('option', { name: 'Not applicable' })).toHaveValue('not_applicable');
+  });
+
+  it('submits with plain Enter', async () => {
+    const store = setup();
+    const editor = screen.getByLabelText('Transcription');
+
+    await fireEvent.keyDown(editor, { key: 'Enter' });
+
+    expect(get(store).project!.annotations).toHaveLength(1);
+  });
+
+  it('lets Shift+Enter insert a transcription line break without submitting', async () => {
     const store = setup();
     const editor = screen.getByLabelText('Transcription');
     const shiftEnter = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, cancelable: true });
     editor.dispatchEvent(shiftEnter);
+    await fireEvent.input(editor, { target: { value: 'first\nsecond' } });
+
     expect(shiftEnter.defaultPrevented).toBe(false);
     expect(get(store).project!.annotations).toHaveLength(0);
-    await fireEvent.keyDown(editor, { key: 'Enter' });
-    expect(get(store).project!.annotations).toHaveLength(1);
+    expect(get(store).project!.draft.transcription).toBe('first\nsecond');
   });
 
   it('does not submit an IME composition confirmation', async () => {
@@ -45,8 +74,10 @@ describe('AnnotationDashboard', () => {
   it('binds integer boundaries and shows the configured time format', async () => {
     const store = setup('clock');
     expect(screen.getByLabelText('Loop start time')).toHaveTextContent('00:00.010');
+    expect(screen.getByLabelText('Selection duration')).toHaveTextContent('00:00.010');
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '30' } });
     await fireEvent.change(screen.getByLabelText('End milliseconds'));
+    expect(screen.getByLabelText('Selection duration')).toHaveTextContent('00:00.020');
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 10, endMs: 30 },
       draft: { startMs: 10, endMs: 30 }
@@ -122,7 +153,8 @@ describe('AnnotationDashboard', () => {
     const store = setup();
     const project = get(store).project!;
     await fireEvent.change(screen.getByLabelText('Speaker'), { target: { value: project.speakers[1].id } });
-    await fireEvent.click(screen.getByLabelText(project.acousticTags[0].label));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Acoustic tags' }));
+    await fireEvent.click(screen.getByRole('option', { name: project.acousticTags[0].label }));
     expect(get(store).project!.draft.speakerId).toBe(project.speakers[1].id);
     expect(get(store).project!.draft.acousticTagIds).toEqual([project.acousticTags[0].id]);
   });
