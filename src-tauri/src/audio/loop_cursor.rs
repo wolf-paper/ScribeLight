@@ -114,6 +114,28 @@ mod tests {
     }
 
     #[test]
+    fn set_position_is_applied_before_the_next_take() {
+        let mut cursor = LoopCursor::new(4, Some(LoopRange::new(10, 12).unwrap()));
+        cursor.set_position(12);
+        assert_eq!(cursor.take(), 10);
+
+        cursor.set_position(8);
+        assert_eq!(cursor.take(), 8);
+    }
+
+    #[test]
+    fn disabling_a_range_resumes_plain_frame_progression() {
+        let mut cursor = LoopCursor::new(4, Some(LoopRange::new(4, 6).unwrap()));
+
+        assert_eq!(cursor.take(), 4);
+        cursor.set_range(None);
+        assert_eq!(
+            (0..3).map(|_| cursor.take()).collect::<Vec<_>>(),
+            vec![5, 6, 7]
+        );
+    }
+
+    #[test]
     fn preserves_a_position_before_the_start_until_it_reaches_the_end() {
         let mut cursor = LoopCursor::new(8, Some(LoopRange::new(10, 12).unwrap()));
 
@@ -134,6 +156,24 @@ mod tests {
             assert!((frame_ms(range.start) - start_ms as f64).abs() <= 1.0);
             assert!((frame_ms(range.end) - end_ms as f64).abs() <= 1.0);
         }
+    }
+
+    #[test]
+    fn rounds_common_sample_rate_boundaries_to_the_exact_nearest_frames() {
+        assert_eq!(
+            LoopRange::from_milliseconds(1_234, 2_345, 44_100).unwrap(),
+            LoopRange {
+                start: 54_419,
+                end: 103_415,
+            }
+        );
+        assert_eq!(
+            LoopRange::from_milliseconds(1_234, 2_345, 48_000).unwrap(),
+            LoopRange {
+                start: 59_232,
+                end: 112_560,
+            }
+        );
     }
 
     #[test]

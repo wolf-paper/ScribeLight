@@ -169,16 +169,74 @@ mod tests {
     }
 
     #[test]
-    fn stale_only_queue_is_an_underrun_and_outputs_silence() {
+    fn drains_exactly_the_captured_capacity_to_reach_an_active_frame_after_stale_frames() {
         let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        let capacity = producer.buffer().capacity();
+        let state = Arc::new(RenderState::new());
+        state.generation.store(2, Ordering::Release);
+        state.playing.store(true, Ordering::Release);
+
+        for source_frame in 0..capacity.saturating_sub(1) {
+            producer
+                .push(QueuedFrame {
+                    generation: 1,
+                    source_frame: source_frame as u64,
+                    left: 0.1,
+                    right: 0.2,
+                })
+                .unwrap();
+        }
         producer
+            .push(QueuedFrame {
+                generation: 2,
+                source_frame: 44,
+                left: 0.6,
+                right: 0.3,
+            })
+            .unwrap();
+        assert!(producer
+            .push(QueuedFrame {
+                generation: 2,
+                source_frame: 45,
+                left: 0.0,
+                right: 0.0,
+            })
+            .is_err());
+
+        let mut render = RenderCore::new(consumer, Arc::clone(&state));
+        assert_eq!(render.stale_scan_limit, capacity);
+        let mut output = [0.0_f32; 2];
+
+        render.fill_f32(&mut output, 2);
+
+        assert_eq!(output, [0.6, 0.3]);
+        assert_eq!(state.source_frame.load(Ordering::Acquire), 44);
+        assert_eq!(state.underruns.load(Ordering::Acquire), 0);
+        assert_eq!(producer.slots(), capacity);
+    }
+
+    #[test]
+    fn a_full_stale_ring_is_drained_with_one_underrun_and_without_extra_work() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        let capacity = producer.buffer().capacity();
+        for source_frame in 0..capacity {
+            producer
+                .push(QueuedFrame {
+                    generation: 3,
+                    source_frame: source_frame as u64,
+                    left: 0.5,
+                    right: 0.5,
+                })
+                .unwrap();
+        }
+        assert!(producer
             .push(QueuedFrame {
                 generation: 3,
                 source_frame: 99,
                 left: 0.5,
                 right: 0.5,
             })
-            .unwrap();
+            .is_err());
         let state = Arc::new(RenderState::new());
         state.generation.store(4, Ordering::Release);
         state.playing.store(true, Ordering::Release);
@@ -190,6 +248,7 @@ mod tests {
         assert_eq!(output, [0.0, 0.0]);
         assert_eq!(state.underruns.load(Ordering::Acquire), 1);
         assert_eq!(state.source_frame.load(Ordering::Acquire), 0);
+        assert_eq!(producer.slots(), capacity);
     }
 
     #[test]
@@ -241,17 +300,27 @@ mod tests {
     }
 
     #[test]
-    fn mono_device_uses_the_left_channel_and_empty_active_queue_underruns() {
-        let (_producer, consumer) = rtrb::RingBuffer::new(2);
+    fn mono_device_uses_the_left_channel_and_updates_the_source_frame() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(2);
+        producer
+            .push(QueuedFrame {
+                generation: 0,
+                source_frame: 13,
+                left: 0.8,
+                right: 0.2,
+            })
+            .unwrap();
         let state = Arc::new(RenderState::new());
         state.playing.store(true, Ordering::Release);
+        state.set_volume(0.5);
         let mut render = RenderCore::new(consumer, Arc::clone(&state));
         let mut output = [1.0_f32; 1];
 
         render.fill_f32(&mut output, 1);
 
-        assert_eq!(output, [0.0]);
-        assert_eq!(state.underruns.load(Ordering::Acquire), 1);
+        assert_eq!(output, [0.4]);
+        assert_eq!(state.source_frame.load(Ordering::Acquire), 13);
+        assert_eq!(state.underruns.load(Ordering::Acquire), 0);
     }
 
     #[test]
