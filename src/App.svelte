@@ -103,8 +103,14 @@
     id: annotation.id,
     startMs: annotation.startMs,
     endMs: annotation.endMs,
+    speakerId: annotation.speakerId,
     transcription: annotation.transcription,
-    speaker: project.speakers.find((speaker) => speaker.id === annotation.speakerId)?.label ?? 'none'
+    speaker: project.speakers.find((speaker) => speaker.id === annotation.speakerId)?.label ?? 'none',
+    tags: annotation.acousticTagIds.flatMap((tagId) => {
+      const tag = project.acousticTags.find((candidate) => candidate.id === tagId);
+      return tag ? [{ id: tag.id, label: tag.label }] : [];
+    }),
+    intelligibility: annotation.intelligibility
   })) : []);
   let canLoop = $derived(Boolean(project && (project.activeSelection || (
     Number.isInteger(project.draft.startMs) && Number.isInteger(project.draft.endMs)
@@ -733,6 +739,7 @@
     <AnnotationTable
       annotations={tableAnnotations}
       activeId={project.activeAnnotationId}
+      format={project.displayFormat}
       disabled={transitionBusy}
       onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
       onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
