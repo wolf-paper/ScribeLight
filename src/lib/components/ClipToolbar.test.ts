@@ -6,34 +6,33 @@ function actions() {
   return {
     open: vi.fn(), importTsv: vi.fn(), togglePlay: vi.fn(), toggleLoop: vi.fn(),
     toggleFormat: vi.fn(), exportTsv: vi.fn(), cancelAnalysis: vi.fn(), setVolume: vi.fn(),
-    setMultilinePolicy: vi.fn()
+    openSettings: vi.fn()
   };
 }
 
 describe('ClipToolbar', () => {
-  it('exposes playback, looping, volume, import, format, and export actions', async () => {
+  it('exposes its identity, settings, playback, looping, volume, import, format, and export actions', async () => {
     const handlers = actions();
     render(ClipToolbar, {
       filename: 'clip.wav', playing: false, loopEnabled: true, canLoop: true,
-      format: 'seconds', multilinePolicy: 'escape', volume: 1, analysisPercent: null, actions: handlers
+      format: 'seconds', volume: 1, analysisPercent: null, actions: handlers
     });
+    expect(screen.getByRole('img', { name: 'Lightscribe waveform logo' })).toBeInTheDocument();
+    expect(screen.getByText('Lightscribe')).toBeVisible();
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Loop on' }));
     await fireEvent.input(screen.getByRole('slider', { name: 'Volume' }), { target: { value: '0.4' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Show clock time' }));
-    const multilinePolicy = screen.getByRole('combobox', { name: 'Multiline export policy' });
-    expect(multilinePolicy).toHaveTextContent('Escape line breaks as \\n');
-    expect(multilinePolicy).toHaveTextContent('Replace line breaks with spaces');
-    expect(multilinePolicy).toHaveTextContent('Preserve line breaks in quoted fields');
-    await fireEvent.change(multilinePolicy, { target: { value: 'quoted' } });
+    expect(screen.queryByRole('combobox', { name: 'Multiline export policy' })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
     expect(handlers.togglePlay).toHaveBeenCalledTimes(1);
     expect(handlers.toggleLoop).toHaveBeenCalledTimes(1);
     expect(handlers.setVolume).toHaveBeenCalledWith(0.4);
     expect(handlers.importTsv).toHaveBeenCalledTimes(1);
     expect(handlers.toggleFormat).toHaveBeenCalledTimes(1);
-    expect(handlers.setMultilinePolicy).toHaveBeenCalledWith('quoted');
+    expect(handlers.openSettings).toHaveBeenCalledTimes(1);
     expect(handlers.exportTsv).toHaveBeenCalledTimes(1);
   });
 
@@ -41,28 +40,30 @@ describe('ClipToolbar', () => {
     const handlers = actions();
     render(ClipToolbar, {
       filename: null, playing: false, loopEnabled: false, canLoop: false,
-      format: 'clock', multilinePolicy: 'space', volume: 1, analysisPercent: 0, actions: handlers
+      format: 'clock', volume: 1, analysisPercent: 0, actions: handlers
     });
     expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Loop off' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Export TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Show decimal seconds' })).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeDisabled();
-    expect(screen.getByRole('progressbar', { name: 'Waveform analysis progress' })).toHaveAttribute('aria-valuenow', '0');
+    const progress = screen.getByRole('progressbar', { name: 'Waveform analysis progress' });
+    expect(progress).toHaveAttribute('aria-valuenow', '0');
+    expect(progress.closest('.analysis-status')).not.toBeNull();
+    expect(progress.closest('.toolbar-main')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel analysis' }));
     expect(handlers.cancelAnalysis).toHaveBeenCalledTimes(1);
   });
 
-  it('disables policy-dependent file actions while a multiline setting is saving', () => {
+  it('disables file actions while settings are saving without disabling playback', () => {
     render(ClipToolbar, {
       filename: 'clip.wav', playing: false, loopEnabled: false, canLoop: true,
-      format: 'seconds', multilinePolicy: 'escape', settingsBusy: true, actions: actions()
+      format: 'seconds', settingsBusy: true, actions: actions()
     });
 
-    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Export TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeDisabled();
   });
 });

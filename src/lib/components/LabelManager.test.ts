@@ -3,17 +3,27 @@ import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 import { createProject } from '../domain/project';
 import { ProjectStore } from '../state/projectStore';
-import AcousticTagManager from './AcousticTagManager.svelte';
-import SpeakerManager from './SpeakerManager.svelte';
+import SettingsDialog from './SettingsDialog.svelte';
 
 const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 };
+
+function renderSettings(store: ProjectStore) {
+  return render(SettingsDialog, {
+    store,
+    palette: 'ion-magenta',
+    multilinePolicy: 'escape',
+    onpalette: vi.fn(),
+    onpolicy: vi.fn(),
+    onclose: vi.fn()
+  });
+}
 
 describe('SpeakerManager', () => {
   it('adds and renames a speaker while persisting the stable ID', async () => {
     const saveProject = vi.fn(async () => undefined);
     const store = new ProjectStore({ saveProject });
     store.open(createProject(audio));
-    render(SpeakerManager, { store });
+    renderSettings(store);
 
     await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'narrator' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add speaker' }));
@@ -34,7 +44,7 @@ describe('SpeakerManager', () => {
     store.open(createProject(audio));
     store.patchDraft({ startMs: 10, endMs: 20, transcription: 'line' });
     await store.commitDraft();
-    render(SpeakerManager, { store });
+    renderSettings(store);
 
     const current = get(store).project!;
     const speaker = current.speakers[0];
@@ -56,7 +66,7 @@ describe('SpeakerManager', () => {
   it('keeps an invalid rename recoverable and exposes its error', async () => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));
-    render(SpeakerManager, { store });
+    renderSettings(store);
 
     const first = get(store).project!.speakers[0];
     const rename = screen.getByLabelText(`Rename ${first.label}`);
@@ -71,7 +81,7 @@ describe('SpeakerManager', () => {
   it('rejects tabs inline when adding and renaming speakers', async () => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));
-    render(SpeakerManager, { store });
+    renderSettings(store);
 
     await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'guest\tname' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add speaker' }));
@@ -90,7 +100,7 @@ describe('AcousticTagManager', () => {
   it('adds and renames an acoustic tag', async () => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));
-    render(AcousticTagManager, { store });
+    renderSettings(store);
 
     await fireEvent.input(screen.getByLabelText('New acoustic tag'), { target: { value: 'whisper' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add acoustic tag' }));
@@ -109,7 +119,7 @@ describe('AcousticTagManager', () => {
     const tag = get(store).project!.acousticTags[0];
     store.patchDraft({ startMs: 10, endMs: 20, transcription: 'line', acousticTagIds: [tag.id] });
     await store.commitDraft();
-    render(AcousticTagManager, { store });
+    renderSettings(store);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
 
     await fireEvent.click(screen.getByRole('button', { name: `Remove ${tag.label}` }));
@@ -127,7 +137,7 @@ describe('AcousticTagManager', () => {
   ])('rejects a %s inline when adding and renaming acoustic tags', async (_kind, invalid, message) => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));
-    render(AcousticTagManager, { store });
+    renderSettings(store);
 
     await fireEvent.input(screen.getByLabelText('New acoustic tag'), { target: { value: invalid } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add acoustic tag' }));

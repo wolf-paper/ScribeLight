@@ -3,13 +3,12 @@
   import type { ProjectStore } from '../state/projectStore';
 
   export let store: ProjectStore;
+  export let disabled = false;
 
   let nextLabel = '';
 
   async function add(): Promise<void> {
-    if (await store.mutateProject((project) => addLabel(project, 'acousticTags', nextLabel))) {
-      nextLabel = '';
-    }
+    if (await store.mutateProject((project) => addLabel(project, 'acousticTags', nextLabel))) nextLabel = '';
   }
 
   async function rename(id: string, value: string): Promise<void> {
@@ -28,26 +27,27 @@
 
 {#if $store.project}
   {@const project = $store.project}
-  <section aria-label="Acoustic tag manager">
+  <section class="label-manager" aria-label="Acoustic tag manager">
+    <h4>Acoustic tags</h4>
     {#each project.acousticTags as tag (tag.id)}
-      <div>
-        <input
-          aria-label={`Rename ${tag.label}`}
-          value={tag.label}
-          on:blur={(event) => rename(tag.id, (event.currentTarget as HTMLInputElement).value)}
-        />
-        <button type="button" on:click={() => remove(tag.id)}>Remove {tag.label}</button>
+      <div class="label-row">
+        <label>
+          <span>Name</span>
+          <input
+            aria-label={`Rename ${tag.label}`}
+            value={tag.label}
+            {disabled}
+            on:blur={(event) => rename(tag.id, (event.currentTarget as HTMLInputElement).value)}
+          />
+        </label>
+        <button type="button" {disabled} on:click={() => remove(tag.id)}>Remove {tag.label}</button>
       </div>
     {/each}
 
     <label>
-      New acoustic tag
-      <input aria-label="New acoustic tag" bind:value={nextLabel} />
+      <span>New acoustic tag</span>
+      <input aria-label="New acoustic tag" bind:value={nextLabel} {disabled} />
     </label>
-    <button type="button" on:click={add}>Add acoustic tag</button>
-
-    {#if $store.saveError}
-      <p role="alert">{$store.saveError}</p>
-    {/if}
+    <button type="button" {disabled} on:click={add}>Add acoustic tag</button>
   </section>
 {/if}
