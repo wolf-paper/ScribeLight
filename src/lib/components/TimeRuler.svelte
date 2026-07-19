@@ -7,9 +7,10 @@
   export let pixelsPerSecond: number;
   export let format: TimeDisplayFormat;
   export let layer: 'top-ruler' | 'bottom-ruler';
+  export let contentWidth: number;
 
   $: ticks = rulerTicks(durationMs, pixelsPerSecond);
-  $: width = timelineContentWidth(durationMs, pixelsPerSecond);
+  $: width = Number.isFinite(contentWidth) ? Math.max(0, contentWidth) : 0;
 </script>
 
 <div class="time-ruler" aria-label="Time ruler" data-timeline-layer={layer} style:width={`${width}px`}>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import TimelineWorkspace from './TimelineWorkspace.svelte';
 
@@ -30,11 +30,10 @@ describe('TimelineWorkspace', () => {
 
     const zoomWheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: 250, ctrlKey: true, deltaY: -100 });
     viewport.dispatchEvent(zoomWheel);
-    await Promise.resolve();
 
     expect(zoomWheel.defaultPrevented).toBe(true);
-    expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '1250px' });
-    expect(viewport.scrollLeft).toBeCloseTo(62.5);
+    await waitFor(() => expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '1250px' }));
+    await waitFor(() => expect(viewport.scrollLeft).toBeCloseTo(62.5));
   });
 
   it('renders rulers, loop selection, waveform slot, and rulers in the required order', () => {
@@ -79,5 +78,52 @@ describe('TimelineWorkspace', () => {
     const content = screen.getByTestId('timeline-content');
     expect(content).toHaveStyle({ width: '0px' });
     expect(content.getAttribute('style')).not.toMatch(/NaN|Infinity/);
+  });
+
+  it('keeps every layer at one effective width before and after measuring a zero-length viewport', async () => {
+    const onchange = vi.fn();
+    render(TimelineWorkspace, { durationMs: 0, format: 'clock', selection: null, onchange });
+    const viewport = screen.getByTestId('timeline-viewport');
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 500 });
+
+    const layerWidths = () => Array.from(
+      screen.getByTestId('timeline-content').querySelectorAll<HTMLElement>('[data-timeline-layer]')
+    ).map((layer) => layer.style.width);
+    expect(layerWidths()).toEqual(['0px', '0px', '0px', '0px']);
+
+    window.dispatchEvent(new Event('resize'));
+    await Promise.resolve();
+
+    expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '500px' });
+    expect(layerWidths()).toEqual(['500px', '500px', '500px', '500px']);
+  });
+
+  it('applies right-edge scroll after the zoomed width is rendered', async () => {
+    const { viewport } = renderTimeline();
+    const content = screen.getByTestId('timeline-content');
+    const assignmentWidths: string[] = [];
+    let scrollLeft = 0;
+    Object.defineProperty(viewport, 'scrollLeft', {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (value: number) => {
+        assignmentWidths.push(content.style.width);
+        scrollLeft = Math.min(value, Math.max(0, Number.parseFloat(content.style.width) - viewport.clientWidth));
+      }
+    });
+    viewport.scrollLeft = 500;
+    assignmentWidths.length = 0;
+
+    viewport.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 500,
+      ctrlKey: true,
+      deltaY: -100
+    }));
+    await waitFor(() => {
+      expect(assignmentWidths).toEqual(['1250px']);
+      expect(viewport.scrollLeft).toBe(750);
+    });
   });
 });

@@ -12,6 +12,7 @@
   export let selection: Selection | null;
   export let durationMs: number;
   export let pixelsPerSecond: number;
+  export let contentWidth: number;
   export let onchange: (selection: Selection) => void;
 
   let drag: DragState | null = null;
@@ -80,6 +81,7 @@
   }
 
   $: visibleSelection = normalizedSelection(selection);
+  $: trackWidth = Number.isFinite(contentWidth) ? Math.max(0, contentWidth) : 0;
   $: left = visibleSelection ? visibleSelection.startMs / 1000 * safePixelsPerSecond() : 0;
   $: width = visibleSelection ? (visibleSelection.endMs - visibleSelection.startMs) / 1000 * safePixelsPerSecond() : 0;
 </script>
@@ -88,6 +90,7 @@
   aria-label="Loop selection"
   class="selection-track"
   data-timeline-layer="loop-selection"
+  style:width={`${trackWidth}px`}
   on:pointermove={move}
   on:pointerup={endDrag}
   on:pointercancel={endDrag}
