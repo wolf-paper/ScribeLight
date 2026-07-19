@@ -18,8 +18,24 @@
 
   $: contentWidth = Math.max(viewportWidth, timelineContentWidth(durationMs, pixelsPerSecond));
 
+  function scheduleScrollAfterRender(target: number): void {
+    pendingScrollLeft = target;
+    const generation = ++scrollGeneration;
+    void applyScrollAfterRender(generation, target);
+  }
+
   function measureViewport(): void {
     viewportWidth = viewport && Number.isFinite(viewport.clientWidth) ? Math.max(0, viewport.clientWidth) : 0;
+    if (!viewport) return;
+    const currentScrollLeft = pendingScrollLeft ?? viewport.scrollLeft;
+    const next = zoomAtPointer(
+      { pixelsPerSecond, scrollLeft: currentScrollLeft, viewportWidth },
+      0,
+      0,
+      durationMs
+    );
+    pixelsPerSecond = next.pixelsPerSecond;
+    if (next.scrollLeft !== currentScrollLeft) scheduleScrollAfterRender(next.scrollLeft);
   }
 
   async function applyScrollAfterRender(generation: number, target: number): Promise<void> {
@@ -56,9 +72,7 @@
       durationMs
     );
     pixelsPerSecond = next.pixelsPerSecond;
-    pendingScrollLeft = next.scrollLeft;
-    const generation = ++scrollGeneration;
-    void applyScrollAfterRender(generation, next.scrollLeft);
+    scheduleScrollAfterRender(next.scrollLeft);
   }
 </script>
 

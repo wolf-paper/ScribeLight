@@ -33,8 +33,8 @@
     return { startMs: start, endMs: end };
   }
 
-  function safePixelsPerSecond(): number {
-    return Number.isFinite(pixelsPerSecond) && pixelsPerSecond > 0 ? pixelsPerSecond : 1;
+  function safePixelsPerSecond(value = pixelsPerSecond): number {
+    return Number.isFinite(value) && value > 0 ? value : 1;
   }
 
   function beginDrag(event: PointerEvent, kind: DragKind): void {
@@ -82,8 +82,9 @@
 
   $: visibleSelection = normalizedSelection(selection);
   $: trackWidth = Number.isFinite(contentWidth) ? Math.max(0, contentWidth) : 0;
-  $: left = visibleSelection ? visibleSelection.startMs / 1000 * safePixelsPerSecond() : 0;
-  $: width = visibleSelection ? (visibleSelection.endMs - visibleSelection.startMs) / 1000 * safePixelsPerSecond() : 0;
+  $: safePixels = safePixelsPerSecond(pixelsPerSecond);
+  $: left = visibleSelection ? visibleSelection.startMs / 1000 * safePixels : 0;
+  $: width = visibleSelection ? (visibleSelection.endMs - visibleSelection.startMs) / 1000 * safePixels : 0;
 </script>
 
 <div

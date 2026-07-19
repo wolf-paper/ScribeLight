@@ -98,6 +98,25 @@ describe('TimelineWorkspace', () => {
     expect(layerWidths()).toEqual(['500px', '500px', '500px', '500px']);
   });
 
+  it('initializes a short nonempty clip at the measured whole-clip fit zoom', async () => {
+    const onchange = vi.fn();
+    render(TimelineWorkspace, {
+      durationMs: 1_000,
+      format: 'seconds',
+      selection: { startMs: 100, endMs: 200 },
+      onchange
+    });
+    const viewport = screen.getByTestId('timeline-viewport');
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 500 });
+
+    window.dispatchEvent(new Event('resize'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '500px' });
+      expect(screen.getByLabelText('Loop selection').querySelector('.selection')).toHaveStyle({ width: '50px' });
+    });
+  });
+
   it('applies right-edge scroll after the zoomed width is rendered', async () => {
     const { viewport } = renderTimeline();
     const content = screen.getByTestId('timeline-content');
@@ -124,6 +143,36 @@ describe('TimelineWorkspace', () => {
     await waitFor(() => {
       expect(assignmentWidths).toEqual(['1250px']);
       expect(viewport.scrollLeft).toBe(750);
+    });
+  });
+
+  it('applies only the latest deferred scroll target for rapid consecutive Ctrl+wheel zooms', async () => {
+    const { viewport } = renderTimeline();
+    const content = screen.getByTestId('timeline-content');
+    const assignmentWidths: string[] = [];
+    let scrollLeft = 0;
+    Object.defineProperty(viewport, 'scrollLeft', {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (value: number) => {
+        assignmentWidths.push(content.style.width);
+        scrollLeft = Math.min(value, Math.max(0, Number.parseFloat(content.style.width) - viewport.clientWidth));
+      }
+    });
+
+    for (let index = 0; index < 2; index += 1) {
+      viewport.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 250,
+        ctrlKey: true,
+        deltaY: -100
+      }));
+    }
+
+    await waitFor(() => {
+      expect(assignmentWidths).toEqual(['1562.5px']);
+      expect(viewport.scrollLeft).toBeCloseTo(140.625);
     });
   });
 });
