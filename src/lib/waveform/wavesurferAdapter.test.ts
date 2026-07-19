@@ -20,7 +20,7 @@ interface RegionDouble {
 function createDouble() {
   const regionListeners = new Map<string, (region: RegionDouble) => void>();
   const waveListeners = new Map<string, () => void>();
-  const disposers = [vi.fn(), vi.fn(), vi.fn()];
+  const disposers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
   const renderer = { renderProgress: vi.fn() };
   const regions = {
     addRegion: vi.fn((options: { id: string; start: number; end: number }) => {
@@ -48,7 +48,7 @@ function createDouble() {
     registerPlugin: vi.fn(() => regions),
     on: vi.fn((event: string, listener: () => void) => {
       waveListeners.set(event, listener);
-      return disposers[2];
+      return disposers[3];
     }),
     getRenderer: vi.fn(() => renderer),
     zoom: vi.fn(),
@@ -104,7 +104,7 @@ describe('createWaveformAdapter', () => {
     expect(changed).toHaveBeenCalledWith({ startMs: 333, endMs: 334 });
   });
 
-  it('removes the prior region when a user creates a second one and normalizes user edits', () => {
+  it('removes the prior region as a second user drag starts, then emits once when it completes', () => {
     const { factory, regionListeners, waveListeners, regions } = createDouble();
     const changed = vi.fn();
     const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, factory);
@@ -112,6 +112,7 @@ describe('createWaveformAdapter', () => {
     adapter.setSelection({ startMs: 100, endMs: 200 });
     waveListeners.get('ready')?.();
     const canonical = regions.addRegion.mock.results[0]?.value as RegionDouble;
+    regionListeners.get('region-initialized')?.(canonical);
     regionListeners.get('region-created')?.(canonical);
     const userRegion: RegionDouble = {
       id: 'user-region',
@@ -121,9 +122,13 @@ describe('createWaveformAdapter', () => {
       remove: vi.fn()
     };
 
-    regionListeners.get('region-created')?.(userRegion);
+    regionListeners.get('region-initialized')?.(userRegion);
     expect(canonical.remove).toHaveBeenCalledOnce();
+    expect(changed).not.toHaveBeenCalled();
+
+    regionListeners.get('region-created')?.(userRegion);
     expect(changed).toHaveBeenLastCalledWith({ startMs: 0, endMs: 1 });
+    expect(changed).toHaveBeenCalledOnce();
 
     userRegion.start = 0.9996;
     userRegion.end = 2;
@@ -162,6 +167,7 @@ describe('createWaveformAdapter', () => {
     expect(disposers[0]).toHaveBeenCalledOnce();
     expect(disposers[1]).toHaveBeenCalledOnce();
     expect(disposers[2]).toHaveBeenCalledOnce();
+    expect(disposers[3]).toHaveBeenCalledOnce();
     expect(wave.destroy).toHaveBeenCalledOnce();
   });
 });

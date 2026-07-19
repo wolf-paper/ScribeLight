@@ -119,6 +119,16 @@ export function createWaveformAdapter(
     if (destroyed || syncing || !next || next !== region) return;
     onchange(normalizeRegion(next.start, next.end, peaks.durationMs));
   };
+  const stopInitialized = regions.on('region-initialized', (next) => {
+    if (destroyed || syncing) return;
+    if (next.id === canonicalRegionId) {
+      if (!desiredSelection || (region && region !== next)) next.remove();
+      else region = next;
+      return;
+    }
+    if (region && region !== next) region.remove();
+    region = next;
+  });
   const stopCreated = regions.on('region-created', (next) => {
     if (destroyed || syncing) return;
     if (next.id === canonicalRegionId) {
@@ -159,6 +169,7 @@ export function createWaveformAdapter(
       if (destroyed) return;
       destroyed = true;
       stopDrag();
+      stopInitialized();
       stopCreated();
       stopUpdated();
       stopReady();
