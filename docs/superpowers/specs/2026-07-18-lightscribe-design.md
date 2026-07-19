@@ -3,7 +3,7 @@
 **Date:** 2026-07-18  
 **Status:** Approved in conversation; pending written-spec review
 
-This document defines Lightscribe's audio, annotation, persistence, and interchange behavior. The approved desktop presentation and workflow are defined by the [Lightscribe UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md), which supersedes the original stacked-dashboard layout and legacy intelligibility vocabulary in this document.
+This document defines Lightscribe's audio, annotation, persistence, and interchange behavior. The approved desktop presentation and workflow are defined by the [Lightscribe UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md), which supersedes the original stacked workspace layout and legacy intelligibility vocabulary in this document.
 
 ## 1. Product Summary
 
@@ -64,7 +64,7 @@ WaveSurfer is a renderer and pointer-interaction surface. It is not the authorit
    - Converts pointer coordinates to integer millisecond selections.
    - Synchronizes region dragging, handles, keyboard markers, rulers, and zoom.
 
-4. **Annotation dashboard**
+4. **Selection inspector**
    - Edits the active selection's structured fields.
    - Provides explicit Add, Update, Clear, and Remove actions.
    - Uses the fixed event, intelligibility, overlap, and confidence vocabularies.
@@ -144,7 +144,6 @@ Ion Magenta is the default palette. Settings also offers Arctic Steel, Ultraviol
 The toolbar contains:
 
 - Open Audio
-- Open Project or Import TSV
 - Current filename and duration
 - Play/Pause
 - Loop enabled toggle
@@ -195,9 +194,9 @@ The selection can be created by dragging across the waveform. Either boundary ca
 
 An Enter key used to accept an active IME composition must never submit the annotation. Shortcut handling must check composition state. Native select menus and modal dialogs retain their standard keyboard behavior. General playback shortcuts do not fire while the user is entering text, except for the specified Enter and Shift+Enter editor behavior.
 
-### 7.5 Annotation dashboard
+### 7.5 Selection inspector
 
-The dashboard shows the exact selection start and end, then provides:
+The Selection inspector shows the exact selection start and end, then provides:
 
 - Event type
 - Speaker
@@ -330,11 +329,11 @@ incomplete_word
 2. Lightscribe restores the matching project and peak cache, if present.
 3. Otherwise, peak generation begins in the background and reports progress.
 4. The user listens through the native engine and creates a selection with the mouse or keyboard.
-5. The selection bar, waveform region, rulers, and dashboard times update together.
+5. The selection bar, waveform region, rulers, and inspector times update together.
 6. The user fills the structured annotation fields.
 7. Enter or Add commits a new annotation. If an existing annotation is active, Enter or Update replaces that annotation while preserving its ID and creation time.
 8. The committed project is atomically persisted.
-9. Selecting a table row restores its selection and fields for replay or editing.
+9. Selecting an annotation-list row restores its selection and fields for replay or editing.
 10. Export TSV validates and writes the current committed annotation list.
 
 Draft fields and the active selection are saved with a short debounce for crash recovery. They do not become committed annotations until Add or Update is invoked.
