@@ -7,10 +7,31 @@ interface SaveBridge {
   saveProject(project: Project): Promise<void>;
 }
 
+interface AnnotationSelectionContext {
+  annotationId: string;
+  draftFieldRevisions: Record<keyof AnnotationDraft, number>;
+  selectionRevision: number;
+}
+
 const draftFields: readonly (keyof AnnotationDraft)[] = [
   'startMs', 'endMs', 'eventType', 'transcription', 'intelligibility',
   'speakerId', 'overlap', 'confidence', 'acousticTagIds', 'notes'
 ];
+
+function draftFromAnnotation(annotation: Annotation): AnnotationDraft {
+  return {
+    startMs: annotation.startMs,
+    endMs: annotation.endMs,
+    eventType: annotation.eventType,
+    transcription: annotation.transcription,
+    intelligibility: annotation.intelligibility,
+    speakerId: annotation.speakerId,
+    overlap: annotation.overlap,
+    confidence: annotation.confidence,
+    acousticTagIds: [...annotation.acousticTagIds],
+    notes: annotation.notes
+  };
+}
 
 export interface ProjectState {
   project: Project | null;
@@ -33,6 +54,7 @@ export class ProjectStore implements Readable<ProjectState> {
   };
   private selectionRevision = 0;
   private activeAnnotationRevision = 0;
+  private annotationSelection: AnnotationSelectionContext | null = null;
   readonly subscribe = this.state.subscribe;
 
   constructor(private readonly bridge: SaveBridge, private readonly id: () => string = () => crypto.randomUUID()) {}
@@ -43,6 +65,7 @@ export class ProjectStore implements Readable<ProjectState> {
     this.markDraftFields(draftFields);
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
+    this.annotationSelection = null;
     this.state.update((value) => ({ project, errors: {}, saveError: value.saveError }));
   }
 
@@ -76,26 +99,17 @@ export class ProjectStore implements Readable<ProjectState> {
     this.markDraftFields(draftFields);
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
-    this.updateProject((project) => {
-      const draft: AnnotationDraft = {
-        startMs: annotation.startMs,
-        endMs: annotation.endMs,
-        eventType: annotation.eventType,
-        transcription: annotation.transcription,
-        intelligibility: annotation.intelligibility,
-        speakerId: annotation.speakerId,
-        overlap: annotation.overlap,
-        confidence: annotation.confidence,
-        acousticTagIds: [...annotation.acousticTagIds],
-        notes: annotation.notes
-      };
-      return {
-        ...project,
-        activeAnnotationId: id,
-        activeSelection: { startMs: annotation.startMs, endMs: annotation.endMs },
-        draft
-      };
-    });
+    this.updateProject((project) => ({
+      ...project,
+      activeAnnotationId: id,
+      activeSelection: { startMs: annotation.startMs, endMs: annotation.endMs },
+      draft: draftFromAnnotation(annotation)
+    }));
+    this.annotationSelection = {
+      annotationId: id,
+      draftFieldRevisions: { ...this.draftFieldRevisions },
+      selectionRevision: this.selectionRevision
+    };
     this.scheduleRecovery();
   }
 
@@ -134,6 +148,7 @@ export class ProjectStore implements Readable<ProjectState> {
     this.markDraftFields(draftFields);
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
+    this.annotationSelection = null;
     this.updateProject((project) => ({
       ...project,
       activeAnnotationId: null,
@@ -172,6 +187,36 @@ export class ProjectStore implements Readable<ProjectState> {
 
   private markDraftFields(fields: readonly (keyof AnnotationDraft)[]): void {
     for (const field of fields) this.draftFieldRevisions[field] += 1;
+  }
+
+  private mergeEditsAfterSelection(
+    base: AnnotationDraft,
+    latest: AnnotationDraft,
+    context: AnnotationSelectionContext,
+    candidate: Project
+  ): AnnotationDraft {
+    const changed = (field: keyof AnnotationDraft): boolean =>
+      this.draftFieldRevisions[field] !== context.draftFieldRevisions[field];
+    const requestedSpeakerId = changed('speakerId') ? latest.speakerId : base.speakerId;
+    const baseSpeakerId = base.speakerId === null || candidate.speakers.some((speaker) => speaker.id === base.speakerId)
+      ? base.speakerId
+      : candidate.speakers[0]?.id ?? null;
+    const speakerId = requestedSpeakerId === null || candidate.speakers.some((speaker) => speaker.id === requestedSpeakerId)
+      ? requestedSpeakerId
+      : baseSpeakerId;
+    const requestedTagIds = changed('acousticTagIds') ? latest.acousticTagIds : base.acousticTagIds;
+    return {
+      startMs: changed('startMs') ? latest.startMs : base.startMs,
+      endMs: changed('endMs') ? latest.endMs : base.endMs,
+      eventType: changed('eventType') ? latest.eventType : base.eventType,
+      transcription: changed('transcription') ? latest.transcription : base.transcription,
+      intelligibility: changed('intelligibility') ? latest.intelligibility : base.intelligibility,
+      speakerId,
+      overlap: changed('overlap') ? latest.overlap : base.overlap,
+      confidence: changed('confidence') ? latest.confidence : base.confidence,
+      acousticTagIds: requestedTagIds.filter((id) => candidate.acousticTags.some((tag) => tag.id === id)),
+      notes: changed('notes') ? latest.notes : base.notes
+    };
   }
 
   private scheduleRecovery(): void {
@@ -259,7 +304,7 @@ export class ProjectStore implements Readable<ProjectState> {
       acousticTagIds,
       notes: draftChanged('notes') ? latest.draft.notes : candidate.draft.notes
     };
-    const published: Project = {
+    let published: Project = {
       ...candidate,
       draft,
       activeSelection: this.selectionRevision === selectionRevision ? candidate.activeSelection : latest.activeSelection,
@@ -267,6 +312,53 @@ export class ProjectStore implements Readable<ProjectState> {
         ? candidate.activeAnnotationId
         : latest.activeAnnotationId
     };
+    const activeChanged = this.activeAnnotationRevision !== activeAnnotationRevision;
+    const selectionContext = this.annotationSelection;
+    if (activeChanged && latest.activeAnnotationId && selectionContext?.annotationId === latest.activeAnnotationId) {
+      const selectedCandidate = candidate.annotations.find((annotation) => annotation.id === latest.activeAnnotationId);
+      if (selectedCandidate) {
+        published = {
+          ...published,
+          activeAnnotationId: selectedCandidate.id,
+          activeSelection: this.selectionRevision === selectionContext.selectionRevision
+            ? { startMs: selectedCandidate.startMs, endMs: selectedCandidate.endMs }
+            : latest.activeSelection,
+          draft: this.mergeEditsAfterSelection(
+            draftFromAnnotation(selectedCandidate),
+            latest.draft,
+            selectionContext,
+            candidate
+          )
+        };
+      } else {
+        const candidateActive = candidate.activeAnnotationId
+          ? candidate.annotations.find((annotation) => annotation.id === candidate.activeAnnotationId)
+          : null;
+        published = candidateActive ? {
+          ...published,
+          activeAnnotationId: candidateActive.id,
+          activeSelection: candidate.activeSelection,
+          draft: candidate.draft
+        } : {
+          ...published,
+          activeAnnotationId: null,
+          activeSelection: this.selectionRevision === selectionContext.selectionRevision
+            ? candidate.activeSelection
+            : latest.activeSelection,
+          draft: this.mergeEditsAfterSelection(candidate.draft, latest.draft, selectionContext, candidate)
+        };
+      }
+    }
+    if (published.activeAnnotationId
+      && !published.annotations.some((annotation) => annotation.id === published.activeAnnotationId)) {
+      published = {
+        ...published,
+        activeAnnotationId: null,
+        activeSelection: candidate.activeSelection,
+        draft: candidate.draft
+      };
+    }
+    if (this.annotationSelection?.annotationId !== published.activeAnnotationId) this.annotationSelection = null;
     this.state.set({ project: published, errors: {}, saveError: null });
     return true;
   }

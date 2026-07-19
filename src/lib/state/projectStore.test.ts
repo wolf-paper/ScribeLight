@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProject } from '../domain/project';
+import { createProject, removeSpeaker, removeTag } from '../domain/project';
 import type { Project } from '../domain/types';
 import { ProjectStore } from './projectStore';
 
@@ -360,6 +360,140 @@ describe('ProjectStore', () => {
       activeSelection: { startMs: 40, endMs: 80 },
       draft: expect.objectContaining({ transcription: 'recover selection' })
     }));
+  });
+
+  it('rebuilds a concurrently selected surviving annotation from the committed candidate', async () => {
+    const project = createProject(audio);
+    const speakerA = project.speakers[0];
+    const speakerB = project.speakers[1];
+    const speakerC = project.speakers[2];
+    const removedTag = project.acousticTags[0];
+    const survivingTag = project.acousticTags[1];
+    project.draft = {
+      ...project.draft,
+      startMs: 10,
+      endMs: 20,
+      speakerId: speakerB.id,
+      transcription: 'unrelated draft using B',
+      acousticTagIds: [survivingTag.id]
+    };
+    project.activeSelection = { startMs: 10, endMs: 20 };
+    project.annotations.push({
+      ...project.draft,
+      id: 'annotation-x',
+      startMs: 40,
+      endMs: 80,
+      speakerId: speakerA.id,
+      transcription: 'candidate annotation X',
+      acousticTagIds: [removedTag.id, survivingTag.id],
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    });
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const mutation = store.mutateProject((current) => {
+      const reassigned = removeSpeaker(current, speakerA.id, speakerC.id);
+      const withoutTag = removeTag(reassigned, removedTag.id, true);
+      return {
+        ...withoutTag,
+        annotations: withoutTag.annotations.map((annotation) => annotation.id === 'annotation-x'
+          ? { ...annotation, startMs: 50, endMs: 90 }
+          : annotation)
+      };
+    });
+    store.selectAnnotation('annotation-x');
+    store.patchDraft({ transcription: 'latest transcription edit', notes: 'latest note edit' });
+    await vi.advanceTimersByTimeAsync(300);
+    mutationSave.resolve();
+
+    await expect(mutation).resolves.toBe(true);
+    await vi.runAllTimersAsync();
+
+    const expectedEditor = {
+      activeAnnotationId: 'annotation-x',
+      activeSelection: { startMs: 50, endMs: 90 },
+      draft: expect.objectContaining({
+        startMs: 50,
+        endMs: 90,
+        speakerId: speakerC.id,
+        acousticTagIds: [survivingTag.id],
+        transcription: 'latest transcription edit',
+        notes: 'latest note edit'
+      })
+    };
+    expect(get(store).project).toMatchObject({
+      ...expectedEditor,
+      annotations: [expect.objectContaining({
+        id: 'annotation-x',
+        startMs: 50,
+        endMs: 90,
+        speakerId: speakerC.id,
+        acousticTagIds: [survivingTag.id]
+      })]
+    });
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining(expectedEditor));
+  });
+
+  it('rejects a concurrently selected annotation deleted by the committed candidate', async () => {
+    const project = createProject(audio);
+    const annotation = {
+      ...project.draft,
+      id: 'annotation-x',
+      startMs: 40,
+      endMs: 80,
+      transcription: 'annotation X',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    };
+    project.annotations.push(annotation);
+    project.activeAnnotationId = annotation.id;
+    project.activeSelection = { startMs: annotation.startMs, endMs: annotation.endMs };
+    project.draft = {
+      startMs: annotation.startMs,
+      endMs: annotation.endMs,
+      eventType: annotation.eventType,
+      transcription: annotation.transcription,
+      intelligibility: annotation.intelligibility,
+      speakerId: annotation.speakerId,
+      overlap: annotation.overlap,
+      confidence: annotation.confidence,
+      acousticTagIds: [...annotation.acousticTagIds],
+      notes: annotation.notes
+    };
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const removal = store.removeAnnotation('annotation-x');
+    store.selectAnnotation('annotation-x');
+    store.patchDraft({ notes: 'independent note after selection' });
+    await vi.advanceTimersByTimeAsync(300);
+    mutationSave.resolve();
+
+    await removal;
+    await vi.runAllTimersAsync();
+
+    const expectedClearedEditor = {
+      annotations: [],
+      activeAnnotationId: null,
+      activeSelection: null,
+      draft: expect.objectContaining({
+        startMs: 0,
+        endMs: 0,
+        transcription: '',
+        speakerId: project.speakers[0].id,
+        acousticTagIds: [],
+        notes: 'independent note after selection'
+      })
+    };
+    expect(get(store).project).toMatchObject(expectedClearedEditor);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining(expectedClearedEditor));
   });
 
   it('merges an unrelated newer draft field without restoring a reference removed by the committed mutation', async () => {
