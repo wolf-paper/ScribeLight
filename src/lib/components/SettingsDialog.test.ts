@@ -1,10 +1,30 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProject } from '../domain/project';
 import { ProjectStore } from '../state/projectStore';
 import SettingsDialog from './SettingsDialog.svelte';
 
 const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 };
+let showModal: ReturnType<typeof vi.fn>;
+let closeDialog: ReturnType<typeof vi.fn>;
+let showModalDescriptor: PropertyDescriptor | undefined;
+let closeDescriptor: PropertyDescriptor | undefined;
+
+beforeEach(() => {
+  showModalDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+  closeDescriptor = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
+  showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', ''); });
+  closeDialog = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute('open'); });
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: showModal });
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: closeDialog });
+});
+
+afterEach(() => {
+  if (showModalDescriptor) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', showModalDescriptor);
+  else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+  if (closeDescriptor) Object.defineProperty(HTMLDialogElement.prototype, 'close', closeDescriptor);
+  else Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+});
 
 function props(store: ProjectStore | null = null) {
   return {
@@ -19,7 +39,7 @@ function props(store: ProjectStore | null = null) {
 
 describe('SettingsDialog', () => {
   it('is an accessible, focused dialog with navigable settings sections', async () => {
-    render(SettingsDialog, props());
+    const { unmount } = render(SettingsDialog, props());
 
     const dialog = screen.getByRole('dialog', { name: 'Settings' });
     expect(dialog).toHaveAttribute('open');
@@ -31,6 +51,17 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('link', { name: 'Export' })).toHaveAttribute('href', '#settings-export');
     expect(screen.getAllByRole('radio')).toHaveLength(4);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close settings' })).toHaveFocus());
+    expect(showModal).toHaveBeenCalledTimes(1);
+
+    const background = document.body.appendChild(document.createElement('button'));
+    background.textContent = 'Background action';
+    background.focus();
+    await fireEvent.focusIn(background);
+    background.remove();
+    expect(screen.getByRole('button', { name: 'Close settings' })).toHaveFocus();
+
+    unmount();
+    expect(closeDialog).toHaveBeenCalledTimes(1);
   });
 
   it('shows project label managers only when a project exists', () => {
@@ -68,8 +99,9 @@ describe('SettingsDialog', () => {
     const dialog = screen.getByRole('dialog', { name: 'Settings' });
 
     await fireEvent.keyDown(dialog, { key: 'Escape' });
+    await fireEvent(dialog, new Event('cancel', { cancelable: true }));
     await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
 
-    expect(handlers.onclose).toHaveBeenCalledTimes(2);
+    expect(handlers.onclose).toHaveBeenCalledTimes(3);
   });
 });

@@ -8,7 +8,6 @@
   import SpeakerManager from './SpeakerManager.svelte';
 
   interface Props {
-    [key: string]: unknown;
     store: ProjectStore | null;
     palette: PaletteId;
     multilinePolicy: MultilinePolicy;
@@ -19,6 +18,7 @@
   }
 
   let { store, palette, multilinePolicy, disabled = false, onpalette, onpolicy, onclose }: Props = $props();
+  let dialog: HTMLDialogElement;
   let closeButton: HTMLButtonElement;
   let projectState: ProjectState | null = $state(null);
 
@@ -30,17 +30,41 @@
     return store.subscribe((value) => projectState = value);
   });
 
-  onMount(() => closeButton.focus());
+  onMount(() => {
+    if (!dialog.open) {
+      if (typeof dialog.showModal === 'function') dialog.showModal();
+      else dialog.setAttribute('open', '');
+    }
+    closeButton.focus();
+
+    return () => {
+      if (!dialog.open) return;
+      if (typeof dialog.close === 'function') dialog.close();
+      else dialog.removeAttribute('open');
+    };
+  });
 
   function keydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     onclose();
   }
+
+  function cancel(event: Event): void {
+    event.preventDefault();
+    onclose();
+  }
+
+  function containFocus(event: FocusEvent): void {
+    const target = event.target;
+    if (dialog?.open && target instanceof Node && !dialog.contains(target)) closeButton.focus();
+  }
 </script>
 
+<svelte:window onfocusin={containFocus} />
+
 <div class="settings-backdrop">
-  <dialog open aria-labelledby="settings-title" onkeydown={keydown}>
+  <dialog bind:this={dialog} aria-labelledby="settings-title" onkeydown={keydown} oncancel={cancel}>
     <header class="settings-header">
       <h2 id="settings-title">Settings</h2>
       <button bind:this={closeButton} type="button" aria-label="Close settings" onclick={onclose}>Close</button>
