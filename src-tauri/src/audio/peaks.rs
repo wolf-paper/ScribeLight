@@ -113,13 +113,20 @@ pub fn read_cache(
 }
 
 fn validate_cache(peaks: &PeakData, identity: &AudioIdentity) -> Result<(), AppError> {
+    let expected_fpp = (identity.sample_rate / 100).max(1);
+    let frames = identity
+        .duration_ms
+        .saturating_mul(u64::from(identity.sample_rate))
+        / 1_000;
+    let expected_pairs = (frames as usize).div_ceil(expected_fpp as usize);
     let valid = peaks.duration_ms == identity.duration_ms
         && peaks.sample_rate == identity.sample_rate
-        && peaks.frames_per_peak > 0
+        && peaks.frames_per_peak == expected_fpp
         && peaks.channels.len() == usize::from(identity.channels)
         && peaks.channels.iter().all(|channel| {
-            channel.len() % 2 == 0
-                && channel.len() <= ((identity.duration_ms / 1_000 + 2) as usize * 202)
+            !channel.is_empty()
+                && channel.len() % 2 == 0
+                && channel.len() / 2 == expected_pairs
                 && channel
                     .iter()
                     .all(|value| value.is_finite() && (-1.0..=1.0).contains(value))
@@ -269,5 +276,43 @@ mod tests {
 
         let error = read_cache(cache.path(), &identity).unwrap_err();
         assert!(error.to_string().contains("Invalid waveform cache"));
+    }
+
+    #[test]
+    fn rejects_semantically_invalid_but_valid_json_cache_shapes() {
+        let (_directory, source) = write_wav(&[1_000_i16; 100], 1_000);
+        let cache = tempfile::tempdir().unwrap();
+        let identity = AudioDecoder::open(&source).unwrap().identity().clone();
+        std::fs::create_dir_all(cache.path()).unwrap();
+        let valid = PeakData {
+            duration_ms: identity.duration_ms,
+            sample_rate: identity.sample_rate,
+            frames_per_peak: 10,
+            channels: vec![vec![
+                -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1,
+                0.1, -0.1, 0.1, -0.1, 0.1,
+            ]],
+        };
+        for invalid in [
+            PeakData {
+                frames_per_peak: 11,
+                ..valid.clone()
+            },
+            PeakData {
+                channels: vec![vec![]],
+                ..valid.clone()
+            },
+            PeakData {
+                channels: vec![vec![-0.1, 1.1]],
+                ..valid.clone()
+            },
+        ] {
+            std::fs::write(
+                cache_path(cache.path(), &identity),
+                serde_json::to_vec(&invalid).unwrap(),
+            )
+            .unwrap();
+            assert!(read_cache(cache.path(), &identity).is_err());
+        }
     }
 }

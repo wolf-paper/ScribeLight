@@ -46,6 +46,7 @@ impl AnalysisState {
         Ok(())
     }
 
+    #[cfg(test)]
     fn may_publish(&self, generation: &Arc<AtomicBool>) -> Result<bool, AppError> {
         let active = self
             .active
@@ -55,6 +56,26 @@ impl AnalysisState {
             && active
                 .as_ref()
                 .is_some_and(|current| Arc::ptr_eq(current, generation)))
+    }
+
+    fn publish_if_current(
+        &self,
+        generation: &Arc<AtomicBool>,
+        action: impl FnOnce(),
+    ) -> Result<bool, AppError> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::Audio("Analysis state lock poisoned".to_owned()))?;
+        if generation.load(Ordering::Acquire)
+            || !active
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, generation))
+        {
+            return Ok(false);
+        }
+        action();
+        Ok(true)
     }
 
     fn finish_if_current(
@@ -102,12 +123,51 @@ mod analysis_state_tests {
         assert!(!state.finish_if_current(&old, || Ok(())).unwrap());
         assert!(state.finish_if_current(&current, || Ok(())).unwrap());
     }
+
+    #[test]
+    fn publication_action_is_not_run_after_the_generation_is_superseded() {
+        let state = AnalysisState::default();
+        let generation = state.begin().unwrap();
+        state.begin().unwrap();
+        let mut called = false;
+        assert!(!state
+            .publish_if_current(&generation, || called = true)
+            .unwrap());
+        assert!(!called);
+    }
+
+    #[test]
+    fn identity_comparison_rejects_a_replaced_source() {
+        let initial = AudioIdentity {
+            canonical_path: "a.wav".into(),
+            size: 1,
+            modified_ms: 1,
+            duration_ms: 1,
+            sample_rate: 1,
+            channels: 1,
+        };
+        assert!(same_source_identity(&initial, &initial));
+        assert!(!same_source_identity(
+            &initial,
+            &AudioIdentity {
+                size: 2,
+                ..initial.clone()
+            }
+        ));
+    }
 }
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, AppError> {
     app.path()
         .app_data_dir()
         .map_err(|error| AppError::Io(error.to_string()))
+}
+
+#[cfg(test)]
+fn same_source_identity(left: &AudioIdentity, right: &AudioIdentity) -> bool {
+    left.canonical_path == right.canonical_path
+        && left.size == right.size
+        && left.modified_ms == right.modified_ms
 }
 
 #[tauri::command]
@@ -174,9 +234,9 @@ pub async fn analyze_audio(
         let progress_app = app.clone();
         let progress_state = state.clone();
         let data = peaks::analyze_decoder(&mut decoder, &cancelled, |value| {
-            if progress_state.may_publish(&cancelled).unwrap_or(false) {
+            let _ = progress_state.publish_if_current(&cancelled, || {
                 let _ = progress_app.emit("analysis-progress", value);
-            }
+            });
         })?;
         let final_app = app.clone();
         if !state.finish_if_current(&cancelled, || {
