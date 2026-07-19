@@ -711,6 +711,22 @@ describe('App', () => {
     expect(bridge.audioOpen).not.toHaveBeenCalled();
   });
 
+  it('rejects peak data whose frame count is materially shorter than the inspected duration', async () => {
+    const bridge = makeFakeBridge();
+    bridge.analyzeAudio.mockResolvedValue({
+      ...fakePeaks(),
+      totalFrames: 1,
+      channels: [[-0.1, 0.1]]
+    });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/waveform.*does not match/i);
+    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(bridge.audioOpen).not.toHaveBeenCalled();
+  });
+
   it('rejects a changed native-open identity before publishing and closes mismatched playback', async () => {
     const bridge = makeFakeBridge();
     bridge.audioOpen.mockResolvedValue({ ...fakeIdentity(), size: 101 });

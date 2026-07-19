@@ -14,6 +14,10 @@ use symphonia::core::{
 
 const MAX_DURATION_MS: u64 = 30 * 60 * 1_000;
 
+pub(crate) fn duration_ms_from_frames(total_frames: u64, sample_rate: u32) -> Option<u64> {
+    (sample_rate > 0).then(|| total_frames.saturating_mul(1_000) / u64::from(sample_rate))
+}
+
 pub(crate) fn modified_ms(time: std::time::SystemTime) -> Result<i64, AppError> {
     let duration = time.duration_since(std::time::UNIX_EPOCH).map_err(|_| {
         AppError::Audio("Source modification time predates the Unix epoch".to_owned())
@@ -131,7 +135,7 @@ impl AudioDecoder {
             .or_else(|| {
                 track
                     .num_frames
-                    .map(|frames| frames.saturating_mul(1_000) / u64::from(sample_rate))
+                    .and_then(|frames| duration_ms_from_frames(frames, sample_rate))
             })
             .ok_or_else(|| AppError::Audio("Audio duration is unknown".to_owned()))?;
         let max_frames = u64::from(sample_rate) * 30 * 60;

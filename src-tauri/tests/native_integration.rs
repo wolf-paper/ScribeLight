@@ -166,6 +166,24 @@ fn mp3_exact_seek_matches_sequential_decode() {
 }
 
 #[test]
+fn mp3_peak_cache_frame_extent_matches_its_inspected_duration() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/decoder-smoke.mp3");
+    let cache = tempfile::tempdir().expect("temporary MP3 peak cache");
+    let identity = AudioDecoder::open(&path)
+        .expect("inspect MP3 for cache identity")
+        .identity()
+        .clone();
+    let peaks =
+        analyze_path(&path, &AtomicBool::new(false), |_| {}).expect("analyze MP3 peak data");
+
+    write_cache(cache.path(), &identity, &peaks).expect("write MP3 peak cache");
+    assert_eq!(
+        read_cache(cache.path(), &identity).expect("read MP3 peak cache"),
+        Some(peaks)
+    );
+}
+
+#[test]
 fn peak_cache_key_invalidates_after_source_size_or_mtime_changes() {
     let directory = tempfile::tempdir().expect("temporary cache directory");
 
@@ -247,10 +265,19 @@ fn corrupt_truncated_and_invalid_peak_caches_regenerate_when_audio_reopens() {
         duration_ms: identity.duration_ms + 1,
         ..expected.clone()
     };
+    let coherently_truncated = lightscribe_lib::model::PeakData {
+        total_frames: 1,
+        duration_ms: identity.duration_ms,
+        sample_rate: identity.sample_rate,
+        frames_per_peak: expected.frames_per_peak,
+        channels: vec![vec![0.0, 0.0]; usize::from(identity.channels)],
+    };
     let broken_caches = [
         b"{\"totalFrames\":".to_vec(),
         br#"{"schemaVersion":999}"#.to_vec(),
         serde_json::to_vec(&invalid_shape).expect("serialize invalid peak shape"),
+        serde_json::to_vec(&coherently_truncated)
+            .expect("serialize coherently truncated peak cache"),
     ];
 
     for broken in broken_caches {

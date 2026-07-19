@@ -5,6 +5,8 @@ const forbidden = [
   'LIGHTSCRIBE_BROWSER_FAKE_V1',
   '__LIGHTSCRIBE_TEST__',
   '__LIGHTSCRIBE_LAST_EXPORT__',
+  '@tauri-apps/plugin-opener',
+  'tauri-plugin-opener',
   'annotation-audio-test.wav',
   'pass-a.annotation.private.tsv',
   '待って',

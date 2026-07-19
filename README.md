@@ -55,3 +55,5 @@ Times use decimal seconds with three fractional digits. The `escape` multiline p
 The Rust CPAL/Symphonia playback engine is authoritative for playback position, exact seeking, and loop application in source PCM frames. WaveSurfer receives precomputed min/max peaks and is only the renderer; browser timing never defines native playback position or loop boundaries.
 
 The desktop capability grants Tauri core defaults, the explicit window-destroy operation required after a successful recovery flush, and open/save file dialogs. It does not grant directory enumeration or opener permissions.
+
+The production Content Security Policy permits only bundled UI resources and Tauri's local IPC endpoint. Dynamic inline styles remain enabled because Svelte's timeline geometry and WaveSurfer's shadow-DOM renderer update element styles at runtime; remote network, blob, data, asset, and media sources remain blocked.

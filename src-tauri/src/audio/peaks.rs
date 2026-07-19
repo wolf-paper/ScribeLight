@@ -1,5 +1,5 @@
 use crate::{
-    audio::decoder::AudioDecoder,
+    audio::decoder::{duration_ms_from_frames, AudioDecoder},
     error::AppError,
     model::{AnalysisProgress, AudioIdentity, PeakData},
 };
@@ -126,6 +126,8 @@ fn validate_cache(peaks: &PeakData, identity: &AudioIdentity) -> Result<(), AppE
         && peaks.sample_rate == identity.sample_rate
         && peaks.total_frames > 0
         && peaks.total_frames <= u64::from(identity.sample_rate) * 30 * 60
+        && duration_ms_from_frames(peaks.total_frames, identity.sample_rate)
+            == Some(identity.duration_ms)
         && peaks.frames_per_peak == expected_fpp
         && peaks.channels.len() == usize::from(identity.channels)
         && peaks.channels.iter().all(|channel| {
@@ -280,6 +282,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(read_cache(cache.path(), &identity).unwrap(), None);
+    }
+
+    #[test]
+    fn cache_frame_count_must_encode_the_inspected_duration_exactly() {
+        let (_directory, source) = write_wav(&[1_000_i16; 10_000], 1_000);
+        let cache = tempfile::tempdir().unwrap();
+        let identity = AudioDecoder::open(&source).unwrap().identity().clone();
+        let truncated = PeakData {
+            total_frames: 1,
+            duration_ms: identity.duration_ms,
+            sample_rate: identity.sample_rate,
+            frames_per_peak: 10,
+            channels: vec![vec![-0.1, 0.1]],
+        };
+        std::fs::create_dir_all(cache.path()).unwrap();
+        std::fs::write(
+            cache_path(cache.path(), &identity),
+            serde_json::to_vec(&truncated).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(identity.duration_ms, 10_000);
+        assert_eq!(read_cache(cache.path(), &identity).unwrap(), None);
+    }
+
+    #[test]
+    fn cache_accepts_a_valid_clip_shorter_than_one_millisecond() {
+        let (_directory, source) = write_wav(&[1_000_i16], 48_000);
+        let cache = tempfile::tempdir().unwrap();
+        let identity = AudioDecoder::open(&source).unwrap().identity().clone();
+        let peaks = analyze_path(&source, &AtomicBool::new(false), |_| {}).unwrap();
+
+        assert_eq!(identity.duration_ms, 0);
+        assert_eq!(peaks.total_frames, 1);
+        write_cache(cache.path(), &identity, &peaks).unwrap();
+        assert_eq!(read_cache(cache.path(), &identity).unwrap(), Some(peaks));
     }
 
     #[test]

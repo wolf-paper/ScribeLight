@@ -157,6 +157,7 @@
     const valid = Number.isInteger(value.totalFrames)
       && value.totalFrames > 0
       && value.totalFrames <= identity.sampleRate * 30 * 60
+      && Math.floor(value.totalFrames * 1_000 / identity.sampleRate) === identity.durationMs
       && value.durationMs === identity.durationMs
       && value.sampleRate === identity.sampleRate
       && value.framesPerPeak === expectedFramesPerPeak
