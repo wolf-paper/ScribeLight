@@ -4,7 +4,7 @@ import type {
   PeakData,
   PlaybackSnapshot
 } from '../lib/bridge/native';
-import type { MultilinePolicy, Project } from '../lib/domain/types';
+import type { Project } from '../lib/domain/types';
 
 const marker = 'LIGHTSCRIBE_BROWSER_FAKE_V1';
 const identity = {
@@ -49,8 +49,12 @@ const importedFixture: ImportedTsv = {
 interface BrowserFakeState {
   saved: Project | null;
   snapshot: PlaybackSnapshot;
-  lastTsv: string;
   nextId: number;
+}
+
+interface BrowserExportRecord {
+  path: string;
+  project: Project;
 }
 
 const emptySnapshot = (): PlaybackSnapshot => ({
@@ -65,7 +69,6 @@ const emptySnapshot = (): PlaybackSnapshot => ({
 const freshState = (): BrowserFakeState => ({
   saved: null,
   snapshot: emptySnapshot(),
-  lastTsv: '',
   nextId: 0
 });
 
@@ -86,43 +89,6 @@ function readState(key: string): BrowserFakeState {
   }
 }
 
-function encodeMultiline(value: string, policy: MultilinePolicy): string {
-  const normalized = value.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-  if (policy === 'escape') return normalized.replaceAll('\\', '\\\\').replaceAll('\n', '\\n');
-  if (policy === 'space') return normalized.replaceAll('\n', ' ');
-  return normalized;
-}
-
-function cell(value: string): string {
-  return /[\t\n"]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
-}
-
-function portableTsv(project: Project): string {
-  const header = 'start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n';
-  const speaker = (id: string | null) =>
-    project.speakers.find((item) => item.id === id)?.label ?? 'none';
-  const tags = (ids: string[]) => ids
-    .map((id) => project.acousticTags.find((item) => item.id === id)?.label)
-    .filter((label): label is string => Boolean(label))
-    .join(';');
-  const rows = [...project.annotations]
-    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs)
-    .map((annotation) => [
-      (annotation.startMs / 1_000).toFixed(3),
-      (annotation.endMs / 1_000).toFixed(3),
-      annotation.eventType,
-      encodeMultiline(annotation.transcription, project.exportSettings.multilinePolicy),
-      annotation.intelligibility,
-      speaker(annotation.speakerId),
-      annotation.overlap,
-      annotation.confidence,
-      tags(annotation.acousticTagIds),
-      encodeMultiline(annotation.notes, project.exportSettings.multilinePolicy)
-    ].map(cell).join('\t'))
-    .join('\n');
-  return header + rows + (rows ? '\n' : '');
-}
-
 function fixedPeaks(): PeakData {
   return {
     totalFrames: 480_000,
@@ -136,6 +102,10 @@ function fixedPeaks(): PeakData {
 export function browserTestProps() {
   const key = storageKey();
   let state = readState(key);
+  const browserGlobal = globalThis as typeof globalThis & {
+    __LIGHTSCRIBE_LAST_EXPORT__: BrowserExportRecord | null;
+  };
+  browserGlobal.__LIGHTSCRIBE_LAST_EXPORT__ = null;
   const persist = () => sessionStorage.setItem(key, JSON.stringify(state));
   const updateSnapshot = (patch: Partial<PlaybackSnapshot>) => {
     state = { ...state, snapshot: { ...state.snapshot, ...patch } };
@@ -152,9 +122,11 @@ export function browserTestProps() {
         ? structuredClone(state.saved)
         : null,
     readTsv: async () => structuredClone(importedFixture),
-    writeTsv: async (_path, project) => {
-      state = { ...state, lastTsv: portableTsv(project) };
-      persist();
+    writeTsv: async (path, project) => {
+      browserGlobal.__LIGHTSCRIBE_LAST_EXPORT__ = {
+        path,
+        project: structuredClone(project)
+      };
     },
     inspectAudio: async () => ({ ...identity }),
     analyzeAudio: async () => fixedPeaks(),
@@ -176,7 +148,6 @@ export function browserTestProps() {
 
   const testApi = {
     marker,
-    get lastTsv() { return state.lastTsv; },
     get savedProject() { return state.saved ? structuredClone(state.saved) : null; },
     get snapshot() { return structuredClone(state.snapshot); }
   };

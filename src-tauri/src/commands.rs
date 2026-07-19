@@ -9,9 +9,7 @@ use crate::{
     persistence,
     tsv::{self, ImportedTsv},
 };
-use atomic_write_file::AtomicWriteFile;
 use std::{
-    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -236,11 +234,7 @@ pub fn read_tsv(path: String, multiline_policy: MultilinePolicy) -> Result<Impor
 
 #[tauri::command]
 pub fn write_tsv(path: String, project: Project) -> Result<(), AppError> {
-    let text = tsv::export_tsv(&project)?;
-    let mut file = AtomicWriteFile::options().open(path)?;
-    file.write_all(text.as_bytes())?;
-    file.commit()?;
-    Ok(())
+    tsv::write_tsv_to_path(Path::new(&path), &project)
 }
 
 #[tauri::command]

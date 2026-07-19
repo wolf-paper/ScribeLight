@@ -1,5 +1,7 @@
 use crate::{error::AppError, model::*};
+use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
+use std::{io::Write, path::Path};
 
 const HEADER: [&str; 10] = [
     "start_seconds",
@@ -226,6 +228,14 @@ pub fn export_tsv(project: &Project) -> Result<String, AppError> {
         .into_inner()
         .map_err(|error| AppError::Tsv(error.to_string()))?;
     String::from_utf8(bytes).map_err(|error| AppError::Tsv(error.to_string()))
+}
+
+pub fn write_tsv_to_path(path: &Path, project: &Project) -> Result<(), AppError> {
+    let text = export_tsv(project)?;
+    let mut file = AtomicWriteFile::options().open(path)?;
+    file.write_all(text.as_bytes())?;
+    file.commit()?;
+    Ok(())
 }
 
 pub fn parse_tsv(text: &str, multiline_policy: MultilinePolicy) -> Result<ImportedTsv, AppError> {

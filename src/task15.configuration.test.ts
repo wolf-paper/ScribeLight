@@ -19,6 +19,10 @@ describe('Task 15 release configuration', () => {
     const entry = readFileSync('src/main.ts', 'utf8');
     expect(entry).toContain("import.meta.env.MODE === 'test'");
     expect(entry).toContain("import('./test/browserFakeBridge').then");
+
+    const fake = readFileSync('src/test/browserFakeBridge.ts', 'utf8');
+    expect(fake).toContain('__LIGHTSCRIBE_LAST_EXPORT__');
+    expect(fake).not.toMatch(/portableTsv|encodeMultiline|lastTsv/);
   });
 
   it('commits the literal UTF-8 fixture text without replacement characters', () => {

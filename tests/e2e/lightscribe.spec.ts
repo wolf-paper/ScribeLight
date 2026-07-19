@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import type { Project } from '../../src/lib/domain/types';
 
 const fixtureUrl = (story: string, reset = false) =>
   `/?fixture=annotation-audio-test.wav&case=${encodeURIComponent(story)}${reset ? '&reset=1' : ''}`;
@@ -109,14 +110,53 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
     .toContainText('Exported 3 annotations');
   const exported = await page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { lastTsv: string };
+      __LIGHTSCRIBE_LAST_EXPORT__: { path: string; project: Project };
     }
-  ).__LIGHTSCRIBE_TEST__.lastTsv);
-  expect(exported).toMatch(/^start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n/);
-  expect(exported).toContain('待って\tintelligible\tnarrator\toverlap\thigh\twhisper');
-  expect(exported).toContain('はい\tintelligible\tspeaker_2\toverlap\tmedium\tbreath');
-  expect(exported).toContain('もう一度\\n続き');
-  expect(exported).not.toContain('\uFFFD');
+  ).__LIGHTSCRIBE_LAST_EXPORT__);
+  expect(exported.path).toBe('lightscribe-export.tsv');
+
+  const project = exported.project;
+  expect(project.annotations).toHaveLength(3);
+  expect(project.speakers.map(({ label }) => label)).toContain('narrator');
+  expect(project.acousticTags.map(({ label }) => label)).toContain('whisper');
+  const portableAnnotations = project.annotations
+    .map((annotation) => ({
+      startMs: annotation.startMs,
+      endMs: annotation.endMs,
+      transcription: annotation.transcription,
+      overlap: annotation.overlap,
+      speaker: project.speakers.find(({ id }) => id === annotation.speakerId)?.label ?? null,
+      tags: annotation.acousticTagIds.map((tagId) =>
+        project.acousticTags.find(({ id }) => id === tagId)?.label
+      )
+    }))
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  expect(portableAnnotations).toEqual([
+    {
+      startMs: 1_000,
+      endMs: 2_000,
+      transcription: '待って',
+      overlap: 'overlap',
+      speaker: 'narrator',
+      tags: ['whisper']
+    },
+    {
+      startMs: 1_500,
+      endMs: 2_500,
+      transcription: 'はい',
+      overlap: 'overlap',
+      speaker: 'speaker_2',
+      tags: ['breath']
+    },
+    {
+      startMs: 3_000,
+      endMs: 4_000,
+      transcription: 'もう一度\n続き',
+      overlap: 'none',
+      speaker: 'narrator',
+      tags: []
+    }
+  ]);
 });
 
 test('recovers the saved project after a renderer reopen', async ({ page }) => {

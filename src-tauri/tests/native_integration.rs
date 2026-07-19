@@ -6,10 +6,10 @@ use lightscribe_lib::{
         peaks::{analyze_path, cache_path, read_cache, write_cache},
     },
     model::{
-        AnnotationDraft, AudioIdentity, Confidence, EventType, ExportSettings, Intelligibility,
-        MultilinePolicy, Overlap, Project, TimeDisplayFormat,
+        Annotation, AnnotationDraft, AudioIdentity, Confidence, EventType, ExportSettings,
+        Intelligibility, LabelDefinition, MultilinePolicy, Overlap, Project, TimeDisplayFormat,
     },
-    tsv::{export_tsv, parse_tsv},
+    tsv::{export_tsv, parse_tsv, write_tsv_to_path},
 };
 use std::{
     fs::OpenOptions,
@@ -30,6 +30,54 @@ fn fixture(name: &str) -> PathBuf {
 fn source_digest(path: &Path) -> (u64, blake3::Hash) {
     let bytes = std::fs::read(path).expect("read source fixture");
     (bytes.len() as u64, blake3::hash(&bytes))
+}
+
+fn populated_export_project(identity: AudioIdentity) -> Project {
+    Project {
+        schema_version: 1,
+        audio_identity: identity,
+        display_format: TimeDisplayFormat::Seconds,
+        speakers: vec![LabelDefinition {
+            id: "speaker-narrator".into(),
+            label: "narrator".into(),
+        }],
+        acoustic_tags: vec![LabelDefinition {
+            id: "tag-whisper".into(),
+            label: "whisper".into(),
+        }],
+        annotations: vec![Annotation {
+            id: "annotation-export".into(),
+            start_ms: 3_000,
+            end_ms: 4_000,
+            event_type: EventType::Speech,
+            transcription: "もう一度\nお願いします".into(),
+            intelligibility: Intelligibility::Intelligible,
+            speaker_id: Some("speaker-narrator".into()),
+            overlap: Overlap::Overlap,
+            confidence: Confidence::High,
+            acoustic_tag_ids: vec!["tag-whisper".into()],
+            notes: "確認\n済み".into(),
+            created_at: "2026-07-19T00:00:00.000Z".into(),
+            updated_at: "2026-07-19T00:00:00.000Z".into(),
+        }],
+        draft: AnnotationDraft {
+            start_ms: 0,
+            end_ms: 0,
+            event_type: EventType::Speech,
+            transcription: String::new(),
+            intelligibility: Intelligibility::Intelligible,
+            speaker_id: Some("speaker-narrator".into()),
+            overlap: Overlap::None,
+            confidence: Confidence::High,
+            acoustic_tag_ids: vec![],
+            notes: String::new(),
+        },
+        active_annotation_id: Some("annotation-export".into()),
+        active_selection: None,
+        export_settings: ExportSettings {
+            multiline_policy: MultilinePolicy::Escape,
+        },
+    }
 }
 
 #[test]
@@ -195,6 +243,49 @@ fn thirty_minute_analysis_bounds_peak_pairs_and_pcm_ring_to_one_second() {
 }
 
 #[test]
+fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
+    let source = fixture("annotation-audio-test.wav");
+    let identity = AudioDecoder::open(&source)
+        .expect("inspect source identity")
+        .identity()
+        .clone();
+    let project = populated_export_project(identity);
+    let directory = tempfile::tempdir().expect("temporary export directory");
+    let output = directory.path().join("renamed-labels.tsv");
+    let expected = concat!(
+        "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n",
+        "3.000\t4.000\tspeech\tもう一度\\nお願いします\tintelligible\tnarrator\toverlap\thigh\twhisper\t確認\\n済み\n"
+    );
+
+    assert_eq!(
+        export_tsv(&project).expect("serialize populated project"),
+        expected
+    );
+    write_tsv_to_path(&output, &project).expect("atomically write populated TSV");
+    assert_eq!(
+        std::fs::read(&output).expect("read exported TSV"),
+        expected.as_bytes()
+    );
+
+    let parsed = parse_tsv(
+        &std::fs::read_to_string(&output).expect("read UTF-8 TSV"),
+        MultilinePolicy::Escape,
+    )
+    .expect("parse exported TSV");
+    assert_eq!(parsed.annotations.len(), 1);
+    assert_eq!(parsed.annotations[0].start_ms, 3_000);
+    assert_eq!(parsed.annotations[0].end_ms, 4_000);
+    assert_eq!(
+        parsed.annotations[0].transcription,
+        "もう一度\nお願いします"
+    );
+    assert_eq!(parsed.annotations[0].speaker.as_deref(), Some("narrator"));
+    assert_eq!(parsed.annotations[0].overlap, Overlap::Overlap);
+    assert_eq!(parsed.annotations[0].acoustic_tags, vec!["whisper"]);
+    assert_eq!(parsed.annotations[0].notes, "確認\n済み");
+}
+
+#[test]
 fn analysis_import_and_export_leave_source_hash_size_and_directory_unchanged() {
     let path = fixture("annotation-audio-test.wav");
     let before = source_digest(&path);
@@ -218,33 +309,13 @@ fn analysis_import_and_export_leave_source_hash_size_and_directory_unchanged() {
         sample_rate: peaks.sample_rate,
         channels: peaks.channels.len() as u16,
     };
-    let project = Project {
-        schema_version: 1,
-        audio_identity: identity,
-        display_format: TimeDisplayFormat::Seconds,
-        speakers: vec![],
-        acoustic_tags: vec![],
-        annotations: vec![],
-        draft: AnnotationDraft {
-            start_ms: 0,
-            end_ms: 0,
-            event_type: EventType::Speech,
-            transcription: String::new(),
-            intelligibility: Intelligibility::Intelligible,
-            speaker_id: None,
-            overlap: Overlap::None,
-            confidence: Confidence::High,
-            acoustic_tag_ids: vec![],
-            notes: String::new(),
-        },
-        active_annotation_id: None,
-        active_selection: None,
-        export_settings: ExportSettings {
-            multiline_policy: MultilinePolicy::Escape,
-        },
-    };
-    let exported = export_tsv(&project).expect("export portable TSV");
-    assert!(exported.starts_with("start_seconds\tend_seconds\tevent_type\ttranscription\t"));
+    let project = populated_export_project(identity);
+    let export_directory = tempfile::tempdir().expect("temporary export directory");
+    write_tsv_to_path(
+        &export_directory.path().join("source-preservation.tsv"),
+        &project,
+    )
+    .expect("write populated portable TSV away from source audio");
 
     assert_eq!(source_digest(&path), before, "source WAV bytes changed");
     let adjacent_after = std::fs::read_dir(path.parent().unwrap())
