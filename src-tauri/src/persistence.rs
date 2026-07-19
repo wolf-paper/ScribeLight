@@ -114,7 +114,7 @@ mod tests {
     "endMs": 1,
     "eventType": "speech",
     "transcription": "hello",
-    "intelligibility": "intelligible",
+    "intelligibility": "highly_intelligible",
     "speakerId": "s2",
     "overlap": "none",
     "confidence": "high",
@@ -186,7 +186,11 @@ mod tests {
         );
         assert_eq!(
             serde_json::from_str::<Intelligibility>(r#""intelligible""#).unwrap(),
-            Intelligibility::Intelligible
+            Intelligibility::HighlyIntelligible
+        );
+        assert_eq!(
+            serde_json::to_string(&Intelligibility::HighlyIntelligible).unwrap(),
+            r#""highly_intelligible""#
         );
         assert_eq!(
             serde_json::from_str::<Intelligibility>(r#""partially_intelligible""#).unwrap(),
@@ -240,6 +244,34 @@ mod tests {
             serde_json::from_str::<MultilinePolicy>(r#""quoted""#).unwrap(),
             MultilinePolicy::Quoted
         );
+    }
+
+    #[test]
+    fn legacy_schema_one_intelligibility_loads_and_reserializes_canonically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-project.json");
+        let legacy_json =
+            GOLDEN_NULLABLE_PROJECT_JSON.replace("highly_intelligible", "intelligible");
+        std::fs::write(&path, legacy_json).unwrap();
+
+        let project = load_project_from(&path).unwrap();
+        assert_eq!(project.schema_version, 1);
+        assert_eq!(
+            project.annotations[0].intelligibility,
+            Intelligibility::HighlyIntelligible
+        );
+        save_project_to(&path, &project).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["schemaVersion"], 1);
+        assert_eq!(
+            saved["annotations"][0]["intelligibility"],
+            "highly_intelligible"
+        );
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains(r#""intelligible""#));
     }
 
     #[test]

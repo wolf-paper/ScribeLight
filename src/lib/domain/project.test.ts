@@ -10,5 +10,6 @@ describe('createProject', () => {
     expect(project.speakers.map((item) => item.label)).toEqual(['speaker_1', 'speaker_2', 'speaker_3']);
     expect(project.acousticTags.map((item) => item.label)).toEqual([...DEFAULT_TAG_LABELS]);
     expect(project.draft.speakerId).toBe(project.speakers[0].id);
+    expect(project.draft.intelligibility).toBe('highly_intelligible');
   });
 });

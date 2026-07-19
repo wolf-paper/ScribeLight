@@ -1,6 +1,6 @@
 export type TimeDisplayFormat = 'seconds' | 'clock';
 export type EventType = 'speech' | 'non_speech';
-export type Intelligibility = 'intelligible' | 'partially_intelligible' | 'unintelligible' | 'not_applicable';
+export type Intelligibility = 'highly_intelligible' | 'partially_intelligible' | 'unintelligible' | 'not_applicable';
 export type Overlap = 'none' | 'overlap';
 export type Confidence = 'high' | 'medium' | 'low';
 export type MultilinePolicy = 'escape' | 'space' | 'quoted';

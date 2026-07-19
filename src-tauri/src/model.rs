@@ -72,7 +72,8 @@ pub enum EventType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum Intelligibility {
-    Intelligible,
+    #[serde(alias = "intelligible")]
+    HighlyIntelligible,
     PartiallyIntelligible,
     Unintelligible,
     NotApplicable,
@@ -187,7 +188,7 @@ impl Project {
                 end_ms: 0,
                 event_type: EventType::Speech,
                 transcription: String::new(),
-                intelligibility: Intelligibility::Intelligible,
+                intelligibility: Intelligibility::HighlyIntelligible,
                 speaker_id: Some("s1".into()),
                 overlap: Overlap::None,
                 confidence: Confidence::High,

@@ -20,7 +20,7 @@
   import { mergeImportedTsv } from './lib/domain/importTsv';
   import { createProject } from './lib/domain/project';
   import type { AnnotationDraft, AudioIdentity, MultilinePolicy, Project, Selection } from './lib/domain/types';
-  import { validateDraft } from './lib/domain/validation';
+  import { normalizeIntelligibility, validateDraft } from './lib/domain/validation';
   import { formatUnknownError } from './lib/errors';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
@@ -317,6 +317,17 @@
 
   function normalizeRecoveredProject(value: Project, changed: boolean): Project {
     if (value.schemaVersion !== 1) throw new Error('The recovered project schema is not supported');
+    value = {
+      ...value,
+      annotations: value.annotations.map((annotation) => ({
+        ...annotation,
+        intelligibility: normalizeIntelligibility(annotation.intelligibility)
+      })),
+      draft: {
+        ...value.draft,
+        intelligibility: normalizeIntelligibility(value.draft.intelligibility)
+      }
+    };
     const usedIds = new Set<string>();
     for (const identified of [...value.speakers, ...value.acousticTags, ...value.annotations]) {
       if (typeof identified.id !== 'string' || !identified.id.trim() || usedIds.has(identified.id)) {

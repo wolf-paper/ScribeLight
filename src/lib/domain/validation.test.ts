@@ -7,8 +7,27 @@ const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000
 describe('annotation validation', () => {
   it('requires an ordered in-bounds selection and transcription for intelligible speech', () => {
     const project = createProject(audio);
-    const errors = validateDraft({ ...project.draft, startMs: 500, endMs: 500, transcription: '' }, project);
+    const errors = validateDraft({
+      ...project.draft,
+      startMs: 500,
+      endMs: 500,
+      transcription: '',
+      intelligibility: 'highly_intelligible'
+    }, project);
     expect(errors.endMs).toContain('later');
+    expect(errors.transcription).toContain('required');
+  });
+
+  it('requires transcription for partially intelligible speech', () => {
+    const project = createProject(audio);
+    const errors = validateDraft({
+      ...project.draft,
+      startMs: 100,
+      endMs: 200,
+      transcription: '',
+      intelligibility: 'partially_intelligible'
+    }, project);
+
     expect(errors.transcription).toContain('required');
   });
 
@@ -43,6 +62,6 @@ describe('annotation validation', () => {
   it('restores a usable speech intelligibility value', () => {
     const project = createProject(audio);
     const result = normalizeDraftForEventType({ ...project.draft, intelligibility: 'not_applicable' }, 'speech');
-    expect(result.intelligibility).toBe('intelligible');
+    expect(result.intelligibility).toBe('highly_intelligible');
   });
 });

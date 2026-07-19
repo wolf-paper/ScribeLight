@@ -217,6 +217,41 @@ describe('App', () => {
     await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 300, endMs: 400 }));
   });
 
+  it('normalizes legacy recovered intelligibility before subsequent export', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    const legacyIntelligibility = 'intelligible' as typeof restored.draft.intelligibility;
+    restored.draft = {
+      ...restored.draft,
+      startMs: 100,
+      endMs: 200,
+      transcription: 'legacy draft',
+      intelligibility: legacyIntelligibility
+    };
+    restored.annotations = [{
+      ...restored.draft,
+      id: 'legacy-event',
+      transcription: 'legacy annotation',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }];
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({
+      bridge,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav', exportTsv: async () => 'clip.tsv' }
+    });
+
+    await openClip();
+    expect(screen.getByLabelText('Intelligibility')).toHaveValue('highly_intelligible');
+    await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
+
+    await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
+      schemaVersion: 1,
+      draft: expect.objectContaining({ intelligibility: 'highly_intelligible' }),
+      annotations: [expect.objectContaining({ intelligibility: 'highly_intelligible' })]
+    })));
+  });
+
   it.each([
     ['not finite', Number.NaN, 400],
     ['fractional', 300.5, 400],

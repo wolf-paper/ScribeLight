@@ -1,10 +1,14 @@
-import type { AnnotationDraft, EventType, Project } from './types';
+import type { AnnotationDraft, EventType, Intelligibility, Project } from './types';
 
 export type FieldErrors = Partial<Record<keyof AnnotationDraft, string>>;
 
+export function normalizeIntelligibility(value: Intelligibility | 'intelligible'): Intelligibility {
+  return value === 'intelligible' ? 'highly_intelligible' : value;
+}
+
 export function normalizeDraftForEventType(draft: AnnotationDraft, eventType: EventType): AnnotationDraft {
   if (eventType === 'speech') {
-    return { ...draft, eventType, intelligibility: draft.intelligibility === 'not_applicable' ? 'intelligible' : draft.intelligibility };
+    return { ...draft, eventType, intelligibility: draft.intelligibility === 'not_applicable' ? 'highly_intelligible' : draft.intelligibility };
   }
   return { ...draft, eventType, transcription: '', intelligibility: 'not_applicable', speakerId: null, overlap: 'none' };
 }
@@ -18,7 +22,7 @@ export function validateDraft(draft: AnnotationDraft, project: Project): FieldEr
   if (draft.notes.includes('\t')) errors.notes = 'Notes cannot contain tabs';
   if (draft.eventType === 'speech') {
     if (!draft.speakerId || !project.speakers.some((speaker) => speaker.id === draft.speakerId)) errors.speakerId = 'A project speaker is required';
-    if ((draft.intelligibility === 'intelligible' || draft.intelligibility === 'partially_intelligible') && !draft.transcription.trim()) {
+    if ((draft.intelligibility === 'highly_intelligible' || draft.intelligibility === 'partially_intelligible') && !draft.transcription.trim()) {
       errors.transcription = 'Transcription is required for intelligible speech';
     }
   }

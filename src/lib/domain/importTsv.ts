@@ -1,9 +1,9 @@
 import type { ImportedAnnotation, ImportedTsv } from '../bridge/native';
 import type { Annotation, AnnotationDraft, LabelDefinition, Project } from './types';
-import { normalizeDraftForEventType, validateDraft } from './validation';
+import { normalizeDraftForEventType, normalizeIntelligibility, validateDraft } from './validation';
 
 const eventTypes = ['speech', 'non_speech'] as const;
-const intelligibilities = ['intelligible', 'partially_intelligible', 'unintelligible', 'not_applicable'] as const;
+const intelligibilities = ['highly_intelligible', 'partially_intelligible', 'unintelligible', 'not_applicable', 'intelligible'] as const;
 const overlaps = ['none', 'overlap'] as const;
 const confidences = ['high', 'medium', 'low'] as const;
 
@@ -89,7 +89,7 @@ export function mergeImportedTsv(
       endMs: row.endMs,
       eventType: row.eventType,
       transcription: row.transcription,
-      intelligibility: row.intelligibility,
+      intelligibility: normalizeIntelligibility(row.intelligibility),
       speakerId: speakerId(row.speaker),
       overlap: row.overlap,
       confidence: row.confidence,

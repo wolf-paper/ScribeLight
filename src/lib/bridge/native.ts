@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import type { AudioIdentity, MultilinePolicy, Project, Selection } from '../domain/types';
+import type { AudioIdentity, Intelligibility, MultilinePolicy, Project, Selection } from '../domain/types';
 
 export interface PeakData {
   totalFrames: number;
@@ -30,7 +30,7 @@ export interface ImportedAnnotation {
   endMs: number;
   eventType: 'speech' | 'non_speech';
   transcription: string;
-  intelligibility: 'intelligible' | 'partially_intelligible' | 'unintelligible' | 'not_applicable';
+  intelligibility: Intelligibility | 'intelligible';
   speaker: string | null;
   overlap: 'none' | 'overlap';
   confidence: 'high' | 'medium' | 'low';

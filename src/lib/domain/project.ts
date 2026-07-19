@@ -12,7 +12,7 @@ const label = (value: string): LabelDefinition => ({ id: crypto.randomUUID(), la
 export function emptyDraft(): AnnotationDraft {
   return {
     startMs: 0, endMs: 0, eventType: 'speech', transcription: '',
-    intelligibility: 'intelligible', speakerId: null, overlap: 'none',
+    intelligibility: 'highly_intelligible', speakerId: null, overlap: 'none',
     confidence: 'high', acousticTagIds: [], notes: ''
   };
 }

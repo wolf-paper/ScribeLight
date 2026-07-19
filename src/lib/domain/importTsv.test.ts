@@ -47,6 +47,15 @@ describe('mergeImportedTsv', () => {
     expect(merged.speakers.some((item) => !item.label || item.label === 'none')).toBe(false);
   });
 
+  it('normalizes legacy intelligible rows to the canonical value', () => {
+    const project = createProject(audio);
+    const merged = mergeImportedTsv(project, {
+      speakers: ['guest'], acousticTags: [], annotations: [speech(10, 20, 'legacy')]
+    }, () => crypto.randomUUID());
+
+    expect(merged.annotations[0].intelligibility).toBe('highly_intelligible');
+  });
+
   it('validates every row before mutating and rejects enum, conditional, and boundary inconsistencies', () => {
     const project = createProject(audio);
     const imported: ImportedTsv = {

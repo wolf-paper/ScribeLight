@@ -177,7 +177,7 @@
       <label>
         Intelligibility
         <select aria-label="Intelligibility" value={project.draft.intelligibility} on:change={(event) => store.patchDraft({ intelligibility: (event.currentTarget as HTMLSelectElement).value as typeof project.draft.intelligibility })}>
-          <option>intelligible</option>
+          <option value="highly_intelligible">intelligible</option>
           <option>partially_intelligible</option>
           <option>unintelligible</option>
           <option>not_applicable</option>

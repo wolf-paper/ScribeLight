@@ -67,7 +67,7 @@ fn populated_export_project(identity: AudioIdentity) -> Project {
             end_ms: 4_000,
             event_type: EventType::Speech,
             transcription: "もう一度\nお願いします".into(),
-            intelligibility: Intelligibility::Intelligible,
+            intelligibility: Intelligibility::HighlyIntelligible,
             speaker_id: Some("speaker-narrator".into()),
             overlap: Overlap::Overlap,
             confidence: Confidence::High,
@@ -81,7 +81,7 @@ fn populated_export_project(identity: AudioIdentity) -> Project {
             end_ms: 0,
             event_type: EventType::Speech,
             transcription: String::new(),
-            intelligibility: Intelligibility::Intelligible,
+            intelligibility: Intelligibility::HighlyIntelligible,
             speaker_id: Some("speaker-narrator".into()),
             overlap: Overlap::None,
             confidence: Confidence::High,
@@ -340,7 +340,7 @@ fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
     let output = directory.path().join("renamed-labels.TSV");
     let expected = concat!(
         "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n",
-        "3.000\t4.000\tspeech\tもう一度\\nお願いします\tintelligible\tnarrator\toverlap\thigh\twhisper\t確認\\n済み\n"
+        "3.000\t4.000\tspeech\tもう一度\\nお願いします\thighly_intelligible\tnarrator\toverlap\thigh\twhisper\t確認\\n済み\n"
     );
 
     assert_eq!(

@@ -347,7 +347,7 @@ mod tests {
             end_ms: 2115,
             event_type: EventType::Speech,
             transcription: "こんにちは".into(),
-            intelligibility: Intelligibility::Intelligible,
+            intelligibility: Intelligibility::HighlyIntelligible,
             speaker_id: Some("s1".into()),
             overlap: Overlap::None,
             confidence: Confidence::High,
@@ -374,6 +374,37 @@ mod tests {
         assert_eq!(imported.annotations[0].transcription, "こんにちは");
         assert_eq!(imported.speakers, vec!["speaker_7"]);
         assert_eq!(imported.acoustic_tags, vec!["quiet_dialogue", "breath"]);
+    }
+
+    #[test]
+    fn legacy_intelligibility_tsv_import_reexports_canonically() {
+        let text = "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.100\t0.250\tspeech\tlegacy\tintelligible\tspeaker_1\tnone\thigh\t\t\n";
+        let imported = parse_tsv(text, MultilinePolicy::Escape).unwrap();
+        assert_eq!(
+            imported.annotations[0].intelligibility,
+            Intelligibility::HighlyIntelligible
+        );
+
+        let mut project = Project::fixture("a.wav");
+        project.annotations = vec![Annotation {
+            id: "legacy".into(),
+            start_ms: imported.annotations[0].start_ms,
+            end_ms: imported.annotations[0].end_ms,
+            event_type: imported.annotations[0].event_type.clone(),
+            transcription: imported.annotations[0].transcription.clone(),
+            intelligibility: imported.annotations[0].intelligibility.clone(),
+            speaker_id: Some("s1".into()),
+            overlap: imported.annotations[0].overlap.clone(),
+            confidence: imported.annotations[0].confidence.clone(),
+            acoustic_tag_ids: vec![],
+            notes: imported.annotations[0].notes.clone(),
+            created_at: "1".into(),
+            updated_at: "1".into(),
+        }];
+
+        let exported = export_tsv(&project).unwrap();
+        assert!(exported.contains("\thighly_intelligible\t"));
+        assert!(!exported.contains("\tintelligible\t"));
     }
 
     #[test]
@@ -510,7 +541,7 @@ mod tests {
                 EventType::NonSpeech
             },
             transcription: String::new(),
-            intelligibility: Intelligibility::Intelligible,
+            intelligibility: Intelligibility::HighlyIntelligible,
             speaker_id: speaker_id.map(str::to_owned),
             overlap: Overlap::None,
             confidence: Confidence::High,
