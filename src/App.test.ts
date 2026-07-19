@@ -79,6 +79,7 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(audio).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Import TSV' })).toBeEnabled());
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     expect(await screen.findByText('imported')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
@@ -148,6 +149,80 @@ describe('App', () => {
     expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent('import destination is read-only');
     expect(screen.queryByText('must not publish')).not.toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Opened clip.wav');
+  });
+
+  it('drains a committed import before native replacement and lets the new project win', async () => {
+    const mutationSave = deferred<void>();
+    const bridge = makeFakeBridge({ imported: {
+      speakers: ['guest'], acousticTags: [], annotations: [{
+        startMs: 10, endMs: 20, eventType: 'speech', transcription: 'committed old import',
+        intelligibility: 'intelligible', speaker: 'guest', overlap: 'none', confidence: 'high',
+        acousticTags: [], notes: ''
+      }]
+    } });
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({
+      bridge,
+      pickers: { audio: async () => paths.shift() ?? null, tsv: async () => 'rows.tsv', exportTsv: async () => null }
+    });
+    await openClip();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
+    await waitFor(() => expect(bridge.saveProject).toHaveBeenCalledTimes(1));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled());
+
+    expect(bridge.audioOpen).toHaveBeenCalledTimes(1);
+    mutationSave.resolve();
+
+    await waitFor(() => expect(screen.getByText('new.wav')).toBeInTheDocument());
+    expect(screen.queryByText('committed old import')).not.toBeInTheDocument();
+    expect(bridge.saveProject.mock.calls.some(([saved]) => saved.annotations.some((item) => item.transcription === 'committed old import'))).toBe(true);
+    expect(bridge.audioOpen.mock.calls.map(([path]) => path)).toEqual(['old.wav', 'new.wav']);
+  });
+
+  it('blocks project and playback mutations while a native replacement is pending', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const replacement = deferred<ReturnType<typeof fakeIdentity>>();
+    bridge.audioOpen.mockImplementation(async (path) => {
+      if (path === 'new.wav') return replacement.promise;
+      bridge.currentNativePath = path;
+      return fakeIdentity(path);
+    });
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+    await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'old draft' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledWith('new.wav'));
+
+    expect(screen.getByLabelText('Notes')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Show clock time' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
+    expect(screen.getByLabelText('Volume')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeDisabled();
+    expect(screen.getByLabelText('New speaker')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Add acoustic tag' })).toBeDisabled();
+    expect(screen.getByLabelText('Audio waveform').closest('.project-workspace')).toHaveProperty('inert', true);
+    await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'must be blocked' } });
+    await fireEvent.keyDown(window, { key: 'i' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel analysis' }));
+
+    bridge.currentNativePath = 'new.wav';
+    replacement.resolve(fakeIdentity('new.wav'));
+    await waitFor(() => expect(screen.getByLabelText('Notes')).toBeEnabled());
+    expect(screen.getByText('old.wav')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show clock time' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show decimal seconds' })).toBeInTheDocument());
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      draft: expect.objectContaining({ notes: 'old draft' })
+    }));
+    expect(bridge.currentNativePath).toBe('old.wav');
   });
 
   it('requires explicit modified-recovery approval and refuses annotations outside the new duration', async () => {
@@ -220,6 +295,128 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByText('second.wav')).toBeInTheDocument());
     expect(bridge.audioOpen.mock.calls.map(([path]) => path)).toEqual(['first.wav', 'second.wav']);
     expect(settled).toEqual(['first.wav', 'second.wav']);
+  });
+
+  it('restores the prior native path and playback when a superseding analysis fails', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const firstOpen = deferred<ReturnType<typeof fakeIdentity>>();
+    bridge.audioOpen.mockImplementation(async (path) => {
+      if (path === 'first.wav') {
+        const identity = await firstOpen.promise;
+        bridge.currentNativePath = path;
+        bridge.snapshot = { ...bridge.snapshot, state: 'paused', positionMs: 0, loopRange: null, volume: 1 };
+        return identity;
+      }
+      bridge.currentNativePath = path;
+      bridge.snapshot = { ...bridge.snapshot, state: 'paused', positionMs: 0, durationMs: 1_000, loopRange: null };
+      return fakeIdentity(path);
+    });
+    bridge.analyzeAudio.mockImplementation(async (path) => {
+      if (path === 'bad.wav') throw new Error('newer analysis failed');
+      return fakePeaks();
+    });
+    const paths = ['old.wav', 'first.wav', 'bad.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+    bridge.snapshot = {
+      state: 'playing', positionMs: 321, durationMs: 1_000,
+      loopRange: { startMs: 100, endMs: 400 }, volume: 0.4, underruns: 0
+    };
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledWith('first.wav'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent('newer analysis failed');
+
+    firstOpen.resolve(fakeIdentity('first.wav'));
+    await waitFor(() => expect(bridge.currentNativePath).toBe('old.wav'));
+    expect(screen.getByText('old.wav')).toBeInTheDocument();
+    await waitFor(() => expect(bridge.snapshot).toMatchObject({
+      state: 'playing', positionMs: 321, loopRange: { startMs: 100, endMs: 400 }, volume: 0.4
+    }));
+    expect(bridge.audioOpen.mock.calls.map(([path]) => path)).toEqual(['old.wav', 'first.wav', 'old.wav']);
+    expect(bridge.audioClose).not.toHaveBeenCalled();
+  });
+
+  it('rolls a mismatched replacement back to the prior native path and playback', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    bridge.audioOpen.mockImplementation(async (path) => {
+      bridge.currentNativePath = path;
+      bridge.snapshot = { ...bridge.snapshot, state: 'paused', positionMs: 0, durationMs: 1_000, loopRange: null };
+      return path === 'new.wav' ? { ...fakeIdentity(path), size: 101 } : fakeIdentity(path);
+    });
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+    bridge.snapshot = {
+      state: 'paused', positionMs: 222, durationMs: 1_000,
+      loopRange: { startMs: 50, endMs: 250 }, volume: 0.25, underruns: 0
+    };
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/source audio changed/i);
+    expect(screen.getByText('old.wav')).toBeInTheDocument();
+    expect(bridge.currentNativePath).toBe('old.wav');
+    expect(bridge.snapshot).toMatchObject({
+      state: 'paused', positionMs: 222, loopRange: { startMs: 50, endMs: 250 }, volume: 0.25
+    });
+    expect(bridge.audioClose).not.toHaveBeenCalled();
+  });
+
+  it('surfaces both the candidate failure and an unsuccessful prior-audio rollback', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    let oldOpenCount = 0;
+    bridge.audioOpen.mockImplementation(async (path) => {
+      if (path === 'old.wav' && ++oldOpenCount > 1) throw new Error('old file is no longer readable');
+      bridge.currentNativePath = path;
+      return path === 'new.wav' ? { ...fakeIdentity(path), size: 101 } : fakeIdentity(path);
+    });
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    const alert = await screen.findByRole('alert', { name: 'Application error' });
+    expect(alert).toHaveTextContent('Source audio changed while opening');
+    expect(alert).toHaveTextContent('Restoring the previous audio failed');
+    expect(alert).toHaveTextContent('old file is no longer readable');
+    expect(screen.getByText('old.wav')).toBeInTheDocument();
+    expect(bridge.currentNativePath).toBe('new.wav');
+  });
+
+  it('restores the prior clip before a newer queued native open becomes final', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const firstOpen = deferred<ReturnType<typeof fakeIdentity>>();
+    bridge.audioOpen.mockImplementation(async (path) => {
+      if (path === 'first.wav') {
+        const identity = await firstOpen.promise;
+        bridge.currentNativePath = path;
+        return identity;
+      }
+      bridge.currentNativePath = path;
+      return fakeIdentity(path);
+    });
+    const paths = ['old.wav', 'first.wav', 'second.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledWith('first.wav'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.analyzeAudio).toHaveBeenCalledWith('second.wav'));
+    firstOpen.resolve(fakeIdentity('first.wav'));
+
+    await waitFor(() => expect(screen.getByText('second.wav')).toBeInTheDocument());
+    expect(bridge.currentNativePath).toBe('second.wav');
+    expect(bridge.audioOpen.mock.calls.map(([path]) => path)).toEqual([
+      'old.wav', 'first.wav', 'old.wav', 'second.wav'
+    ]);
   });
 
   it('rejects invalid peak geometry before native open and leaves the current UI untouched', async () => {
@@ -339,5 +536,86 @@ describe('App', () => {
     expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent('cannot save recovery');
     expect(bridge.audioClose).not.toHaveBeenCalled();
     expect(close.lifecycle.destroy).not.toHaveBeenCalled();
+  });
+
+  it('waits for stale native rollback before a failed close clears for retry', async () => {
+    const bridge = makeFakeBridge();
+    const close = makeFakeLifecycle();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const replacement = deferred<ReturnType<typeof fakeIdentity>>();
+    bridge.audioOpen.mockImplementation(async (path) => {
+      if (path === 'new.wav') {
+        const identity = await replacement.promise;
+        bridge.currentNativePath = path;
+        return identity;
+      }
+      bridge.currentNativePath = path;
+      return fakeIdentity(path);
+    });
+    const paths = ['old.wav', 'new.wav'];
+    render(App, {
+      bridge, lifecycle: close.lifecycle,
+      pickers: { ...nullPickers, audio: async () => paths.shift() ?? null }
+    });
+    await openClip();
+    await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'must survive' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledWith('new.wav'));
+    bridge.saveProject.mockRejectedValueOnce(new Error('cannot save recovery'));
+
+    const failedClose = close.triggerClose();
+    let closeSettled = false;
+    void failedClose.result.then(() => { closeSettled = true; });
+    await Promise.resolve();
+    expect(closeSettled).toBe(false);
+    expect(close.lifecycle.destroy).not.toHaveBeenCalled();
+
+    replacement.resolve(fakeIdentity('new.wav'));
+    await failedClose.result;
+    expect(bridge.currentNativePath).toBe('old.wav');
+    expect(bridge.audioClose).not.toHaveBeenCalled();
+    expect(close.lifecycle.destroy).not.toHaveBeenCalled();
+
+    const retry = close.triggerClose();
+    await retry.result;
+    expect(retry.event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(bridge.currentNativePath).toBeNull();
+    expect(bridge.audioClose).toHaveBeenCalledTimes(1);
+    expect(close.lifecycle.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for stale native rollback before the final close and cannot be resurrected', async () => {
+    const bridge = makeFakeBridge();
+    const close = makeFakeLifecycle();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const replacement = deferred<ReturnType<typeof fakeIdentity>>();
+    bridge.audioOpen.mockImplementation(async (path) => {
+      if (path === 'new.wav') {
+        const identity = await replacement.promise;
+        bridge.currentNativePath = path;
+        return identity;
+      }
+      bridge.currentNativePath = path;
+      return fakeIdentity(path);
+    });
+    const paths = ['old.wav', 'new.wav'];
+    render(App, {
+      bridge, lifecycle: close.lifecycle,
+      pickers: { ...nullPickers, audio: async () => paths.shift() ?? null }
+    });
+    await openClip();
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledWith('new.wav'));
+
+    const closeRequest = close.triggerClose();
+    replacement.resolve(fakeIdentity('new.wav'));
+    await closeRequest.result;
+
+    expect(bridge.audioOpen.mock.calls.map(([path]) => path)).toEqual(['old.wav', 'new.wav', 'old.wav']);
+    expect(bridge.audioClose).toHaveBeenCalledTimes(1);
+    expect(bridge.currentNativePath).toBeNull();
+    expect(close.lifecycle.destroy).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(bridge.currentNativePath).toBeNull();
   });
 });

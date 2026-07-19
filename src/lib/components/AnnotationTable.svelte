@@ -10,11 +10,12 @@
   interface Props {
     annotations?: Row[];
     activeId?: string | null;
+    disabled?: boolean;
     onselect: (id: string) => void;
     onremove: (id: string) => void;
   }
 
-  let { annotations = [], activeId = null, onselect, onremove }: Props = $props();
+  let { annotations = [], activeId = null, disabled = false, onselect, onremove }: Props = $props();
   let ordered = $derived([...annotations].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs));
 </script>
 
@@ -25,13 +26,14 @@
         type="button"
         aria-current={annotation.id === activeId ? 'true' : undefined}
         aria-label={`Edit annotation ${annotation.transcription || annotation.id}`}
+        {disabled}
         onclick={() => onselect(annotation.id)}
       >
         <span>{(annotation.startMs / 1000).toFixed(3)}–{(annotation.endMs / 1000).toFixed(3)}</span>
         <span>{annotation.speaker}</span>
         <span>{annotation.transcription || '—'}</span>
       </button>
-      <button type="button" aria-label={`Remove annotation ${annotation.transcription || annotation.id}`} onclick={() => onremove(annotation.id)}>Remove</button>
+      <button type="button" {disabled} aria-label={`Remove annotation ${annotation.transcription || annotation.id}`} onclick={() => onremove(annotation.id)}>Remove</button>
     </div>
   {/each}
 </section>

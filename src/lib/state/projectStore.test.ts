@@ -236,6 +236,33 @@ describe('ProjectStore', () => {
     expect(bridge.saveProject.mock.calls[1][0].draft.notes).toBe('first second');
   });
 
+  it('waits for an already-started committed mutation before flushing its published project', async () => {
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+
+    const mutation = store.mutateProject((project) => ({
+      ...project,
+      draft: { ...project.draft, notes: 'committed before transition' }
+    }));
+    const flush = store.flush();
+    let flushSettled = false;
+    void flush.then(() => { flushSettled = true; });
+    await Promise.resolve();
+
+    expect(flushSettled).toBe(false);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+
+    mutationSave.resolve();
+    await expect(mutation).resolves.toBe(true);
+    await expect(flush).resolves.toBe(true);
+    expect(get(store).project!.draft.notes).toBe('committed before transition');
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      draft: expect.objectContaining({ notes: 'committed before transition' })
+    }));
+  });
+
   it('retains failed-save evidence if a caller opens another project', async () => {
     bridge.saveProject.mockRejectedValueOnce(new Error('old project is not writable'));
     const store = new ProjectStore(bridge);

@@ -13,6 +13,7 @@
   export let onchange: (selection: Selection) => void;
   export let peaks: PeakData | null = null;
   export let playheadMs = 0;
+  export let disabled = false;
 
   let viewport: HTMLDivElement;
   let pixelsPerSecond = 100;
@@ -61,7 +62,7 @@
   });
 
   function wheel(event: WheelEvent): void {
-    if (!event.ctrlKey || !viewport) return;
+    if (disabled || !event.ctrlKey || !viewport) return;
     event.preventDefault();
     measureViewport();
     const bounds = viewport.getBoundingClientRect();
@@ -80,7 +81,7 @@
   }
 </script>
 
-<div bind:this={viewport} class="timeline-viewport" data-testid="timeline-viewport" on:wheel={wheel}>
+<div bind:this={viewport} class="timeline-viewport" data-testid="timeline-viewport" aria-disabled={disabled} inert={disabled} on:wheel={wheel}>
   <div class="timeline-content" data-testid="timeline-content" style:width={`${contentWidth}px`}>
     <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="top-ruler" />
     <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />

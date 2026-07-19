@@ -20,6 +20,7 @@ export class ProjectStore implements Readable<ProjectState> {
   private saveInFlight = false;
   private mutationQueue: Promise<void> = Promise.resolve();
   private mutationInFlight = false;
+  private mutationsBlocked = false;
   readonly subscribe = this.state.subscribe;
 
   constructor(private readonly bridge: SaveBridge, private readonly id: () => string = () => crypto.randomUUID()) {}
@@ -29,12 +30,18 @@ export class ProjectStore implements Readable<ProjectState> {
     this.state.update((value) => ({ project, errors: {}, saveError: value.saveError }));
   }
 
+  setMutationsBlocked(blocked: boolean): void {
+    this.mutationsBlocked = blocked;
+  }
+
   patchDraft(patch: Partial<AnnotationDraft>): void {
+    if (this.mutationsBlocked) return;
     this.updateProject((project) => ({ ...project, draft: { ...project.draft, ...patch } }));
     this.scheduleRecovery();
   }
 
   setSelection(selection: Selection | null): void {
+    if (this.mutationsBlocked) return;
     this.updateProject((project) => ({
       ...project,
       activeSelection: selection,
@@ -44,6 +51,7 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   selectAnnotation(id: string): void {
+    if (this.mutationsBlocked) return;
     this.updateProject((project) => {
       const annotation = project.annotations.find((item) => item.id === id);
       if (!annotation) return project;
@@ -69,6 +77,7 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   async removeAnnotation(id: string): Promise<void> {
+    if (this.mutationsBlocked) return;
     this.cancelRecovery();
     await this.enqueueMutation((current) => {
       const wasActive = current.activeAnnotationId === id;
@@ -83,6 +92,7 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   mutateProject(mutation: (project: Project) => Project): Promise<boolean> {
+    if (this.mutationsBlocked) return Promise.resolve(false);
     this.cancelRecovery();
     return this.enqueueMutation(mutation);
   }
@@ -90,11 +100,13 @@ export class ProjectStore implements Readable<ProjectState> {
   async flush(): Promise<boolean> {
     this.cancelRecovery();
     await this.mutationQueue;
+    await this.saveQueue;
     const project = get(this.state).project;
     return project ? this.persist(project) : true;
   }
 
   clearDraft(): void {
+    if (this.mutationsBlocked) return;
     this.updateProject((project) => ({
       ...project,
       activeAnnotationId: null,
@@ -104,6 +116,7 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   async commitDraft(now = new Date().toISOString()): Promise<boolean> {
+    if (this.mutationsBlocked) return false;
     this.cancelRecovery();
     return this.enqueueMutation((project) => {
       const errors = validateDraft(project.draft, project);

@@ -20,25 +20,26 @@
     format: TimeDisplayFormat;
     volume?: number;
     analysisPercent?: number | null;
+    busy?: boolean;
     actions: Actions;
   }
 
   let {
     filename, playing, loopEnabled, canLoop, format, volume = 1,
-    analysisPercent = null, actions
+    analysisPercent = null, busy = false, actions
   }: Props = $props();
 </script>
 
 <header class="clip-toolbar">
   <button type="button" onclick={actions.open}>Open audio</button>
   <span class="filename" title={filename ?? undefined}>{filename ?? 'No clip open'}</span>
-  <button type="button" disabled={!filename} aria-label={playing ? 'Pause' : 'Play'} onclick={actions.togglePlay}>
+  <button type="button" disabled={!filename || busy} aria-label={playing ? 'Pause' : 'Play'} onclick={actions.togglePlay}>
     {playing ? 'Pause' : 'Play'}
   </button>
   <button
     type="button"
     class:active={loopEnabled}
-    disabled={!filename || (!canLoop && !loopEnabled)}
+    disabled={!filename || busy || (!canLoop && !loopEnabled)}
     aria-pressed={loopEnabled}
     aria-label={loopEnabled ? 'Loop on' : 'Loop off'}
     onclick={actions.toggleLoop}
@@ -52,15 +53,15 @@
       max="1"
       step="0.01"
       value={volume}
-      disabled={!filename}
+      disabled={!filename || busy}
       oninput={(event) => actions.setVolume(+(event.currentTarget as HTMLInputElement).value)}
     />
   </label>
-  <button type="button" disabled={!filename} aria-label={format === 'seconds' ? 'Show clock time' : 'Show decimal seconds'} onclick={actions.toggleFormat}>
+  <button type="button" disabled={!filename || busy} aria-label={format === 'seconds' ? 'Show clock time' : 'Show decimal seconds'} onclick={actions.toggleFormat}>
     {format === 'seconds' ? 'mm:ss.mmm' : 'seconds.mmm'}
   </button>
-  <button type="button" disabled={!filename} onclick={actions.importTsv}>Import TSV</button>
-  <button type="button" disabled={!filename} onclick={actions.exportTsv}>Export TSV</button>
+  <button type="button" disabled={!filename || busy} onclick={actions.importTsv}>Import TSV</button>
+  <button type="button" disabled={!filename || busy} onclick={actions.exportTsv}>Export TSV</button>
   {#if analysisPercent !== null}
     <progress
       aria-label="Waveform analysis progress"

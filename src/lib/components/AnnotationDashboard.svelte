@@ -7,8 +7,9 @@
   import SpeakerManager from './SpeakerManager.svelte';
 
   export let store: ProjectStore;
+  export let disabled = false;
 
-  const submit = () => void store.commitDraft();
+  const submit = () => { if (!disabled) void store.commitDraft(); };
 
   function onEditorKeydown(event: KeyboardEvent) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -17,6 +18,7 @@
   }
 
   function eventTypeChanged(event: Event) {
+    if (disabled) return;
     const project = $store.project;
     if (!project) return;
     const eventType = (event.currentTarget as HTMLSelectElement).value as EventType;
@@ -24,6 +26,7 @@
   }
 
   function setTag(tagId: string, checked: boolean) {
+    if (disabled) return;
     const project = $store.project;
     if (!project) return;
     const acousticTagIds = checked
@@ -36,6 +39,7 @@
 {#if $store.project}
   {@const project = $store.project}
   <section class="annotation-dashboard" aria-label="Annotation dashboard">
+    <fieldset disabled={disabled} aria-label="Annotation editor controls">
     <div class="boundary-grid">
       <label>
         Start
@@ -162,5 +166,6 @@
       <button type="button" on:click={submit}>{project.activeAnnotationId ? 'Update annotation' : 'Add annotation'}</button>
       <button type="button" on:click={() => store.clearDraft()}>Clear</button>
     </div>
+    </fieldset>
   </section>
 {/if}

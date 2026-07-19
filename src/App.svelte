@@ -8,7 +8,8 @@
     tauriBridge,
     type AnalysisProgress,
     type NativeBridge,
-    type PeakData
+    type PeakData,
+    type PlaybackSnapshot
   } from './lib/bridge/native';
   import { tauriLifecycle, type CloseRequestEvent, type LifecycleAdapter } from './lib/bridge/lifecycle';
   import AnnotationDashboard from './lib/components/AnnotationDashboard.svelte';
@@ -72,8 +73,9 @@
   let latestStartedPicker = 0;
   let operationGeneration = 0;
   let activeAnalysisGeneration: number | null = null;
-  let latestQueuedOpenGeneration = 0;
   let audioOpenQueue: Promise<void> = Promise.resolve();
+  let transitionOwner: number | null = null;
+  let transitionBusy = $state(false);
   let closePromise: Promise<void> | null = null;
   let cleanupRequested = false;
   let analysisUnlisten: (() => void) | null = null;
@@ -82,6 +84,9 @@
   let lastLoopSelection = '';
   let lastSaveError: string | null = null;
   let lastPlaybackError: string | null = null;
+  let nativePreservationFailures = 0;
+
+  class NativePreservationError extends Error {}
 
   let project = $derived($projectStore.project);
   let playback = $derived($audioSession);
@@ -117,6 +122,7 @@
   });
 
   $effect(() => {
+    if (transitionBusy) return;
     const selection = project?.activeSelection ?? null;
     const loopEnabled = playback.loopRange !== null;
     if (!loopEnabled || !selection) {
@@ -167,28 +173,99 @@
     return generation === operationGeneration && !closePromise;
   }
 
-  function queueNativeOpen(path: string, identity: AudioIdentity, generation: number): Promise<AudioIdentity | null> {
-    latestQueuedOpenGeneration = generation;
-    const operation = audioOpenQueue.then(async () => {
-      if (!isCurrent(generation)) {
-        if (latestQueuedOpenGeneration === generation) {
-          try { await bridge.audioClose(); } catch { /* A cancelled queued open must not leave an older queued side effect alive. */ }
-        }
-        return null;
+  function beginTransition(owner: number): void {
+    transitionOwner = owner;
+    transitionBusy = true;
+    projectStore.setMutationsBlocked(true);
+  }
+
+  function endTransition(owner: number): void {
+    if (transitionOwner !== owner) return;
+    transitionOwner = null;
+    transitionBusy = false;
+    projectStore.setMutationsBlocked(false);
+  }
+
+  async function restoreNativePlayback(
+    priorIdentity: AudioIdentity | null,
+    snapshot: PlaybackSnapshot | null,
+    primaryFailure: string
+  ): Promise<void> {
+    try {
+      if (!priorIdentity || !snapshot) {
+        await bridge.audioClose();
+        return;
       }
-      const openedIdentity = await bridge.audioOpen(path);
+      const restoredIdentity = await bridge.audioOpen(priorIdentity.canonicalPath);
+      if (!sameAudioIdentity(restoredIdentity, priorIdentity)) {
+        throw new Error('the prior audio identity changed while reopening');
+      }
+      await bridge.audioSetVolume(snapshot.volume);
+      if (snapshot.loopRange) await bridge.audioSetLoop(snapshot.loopRange);
+      else await bridge.audioClearLoop();
+      await bridge.audioSeek(snapshot.positionMs);
+      if (snapshot.state === 'playing') await bridge.audioPlay();
+      else await bridge.audioPause();
+      await audioSession.refresh();
+    } catch (rollbackError) {
+      const combined =
+        `${primaryFailure}. Restoring the previous audio failed: ${errorText(rollbackError)}. Reopen the previous clip before continuing.`
+      nativePreservationFailures += 1;
+      persistentError = combined;
+      throw new NativePreservationError(combined);
+    }
+  }
+
+  function queueNativeOpen(
+    path: string,
+    identity: AudioIdentity,
+    priorIdentity: AudioIdentity | null,
+    generation: number,
+    publish: () => void
+  ): Promise<AudioIdentity | null> {
+    const operation = audioOpenQueue.then(async () => {
+      if (!isCurrent(generation)) return null;
+      let priorSnapshot: PlaybackSnapshot | null = null;
+      if (priorIdentity) {
+        await audioSession.refresh();
+        priorSnapshot = get(audioSession);
+        if (!isCurrent(generation)) return null;
+      }
+      let openedIdentity: AudioIdentity;
+      try {
+        openedIdentity = await bridge.audioOpen(path);
+      } catch (error) {
+        const primaryFailure = `Opening ${basename(path)} failed: ${errorText(error)}`;
+        await restoreNativePlayback(priorIdentity, priorSnapshot, primaryFailure);
+        if (!isCurrent(generation)) return null;
+        throw error;
+      }
       if (!sameAudioIdentity(openedIdentity, identity)) {
-        if (isCurrent(generation) || latestQueuedOpenGeneration === generation) {
-          try { await bridge.audioClose(); } catch { /* Preserve the primary source-change error. */ }
-        }
+        await restoreNativePlayback(
+          priorIdentity,
+          priorSnapshot,
+          'Source audio changed while opening; retry the operation'
+        );
+        if (!isCurrent(generation)) return null;
         throw new Error('Source audio changed while opening; retry the operation');
       }
       if (!isCurrent(generation)) {
-        if (latestQueuedOpenGeneration === generation) {
-          try { await bridge.audioClose(); } catch { /* A cancelled open must not keep mismatched playback alive. */ }
-        }
+        await restoreNativePlayback(priorIdentity, priorSnapshot, 'The audio transition was superseded');
         return null;
       }
+      try {
+        await audioSession.refresh();
+      } catch (error) {
+        const primaryFailure = `Opening ${basename(path)} could not establish playback: ${errorText(error)}`;
+        await restoreNativePlayback(priorIdentity, priorSnapshot, primaryFailure);
+        if (!isCurrent(generation)) return null;
+        throw error;
+      }
+      if (!isCurrent(generation)) {
+        await restoreNativePlayback(priorIdentity, priorSnapshot, 'The audio transition was superseded');
+        return null;
+      }
+      publish();
       return openedIdentity;
     });
     audioOpenQueue = operation.then(() => undefined, () => undefined);
@@ -271,6 +348,7 @@
   }
 
   async function openAudio(): Promise<void> {
+    if (closePromise) return;
     const request = ++pickerRequest;
     let path: string | null;
     try {
@@ -280,6 +358,7 @@
       return;
     }
     if (!path) return;
+    if (closePromise) return;
     if (request < latestStartedPicker) return;
     if (!/\.(mp3|wav)$/i.test(path)) {
       persistentError = 'Choose a single MP3 or WAV audio file';
@@ -288,6 +367,7 @@
 
     latestStartedPicker = request;
     const generation = ++operationGeneration;
+    let transitionStarted = false;
     if (activeAnalysisGeneration !== null) {
       try { await bridge.cancelAnalysis(); } catch { /* Starting analysis also supersedes native work. */ }
       if (!isCurrent(generation)) return;
@@ -312,23 +392,37 @@
       const nextPeaks = await bridge.analyzeAudio(path);
       if (!isCurrent(generation)) return;
       validatePeaks(nextPeaks, identity);
-      if (current && !await projectStore.flush()) {
+      beginTransition(generation);
+      transitionStarted = true;
+      if (get(projectStore).project && !await projectStore.flush()) {
         throw new Error(get(projectStore).saveError ?? 'The current project could not be saved');
       }
       if (!isCurrent(generation)) return;
-      const openedIdentity = await queueNativeOpen(path, identity, generation);
+      const priorProject = get(projectStore).project;
+      const projectToPublish = priorProject?.audioIdentity.canonicalPath === identity.canonicalPath
+        ? { ...priorProject, audioIdentity: identity }
+        : nextProject;
+      validateRecoveredProject(projectToPublish, changed);
+      const openedIdentity = await queueNativeOpen(
+        path,
+        identity,
+        priorProject?.audioIdentity ?? null,
+        generation,
+        () => {
+          projectStore.open(projectToPublish);
+          peaks = nextPeaks;
+        }
+      );
       if (!openedIdentity) return;
       if (!isCurrent(generation)) return;
-      projectStore.open(nextProject);
-      peaks = nextPeaks;
-      await audioSession.refresh();
       audioSession.startPolling();
       status = `Opened ${basename(path)}`;
     } catch (error) {
-      if (isCurrent(generation)) persistentError = errorText(error);
+      if (error instanceof NativePreservationError || isCurrent(generation)) persistentError = errorText(error);
     } finally {
       if (activeAnalysisGeneration === generation) activeAnalysisGeneration = null;
       if (isCurrent(generation)) analysisProgress = null;
+      if (transitionStarted) endTransition(generation);
     }
   }
 
@@ -346,12 +440,15 @@
   }
 
   async function importTsv(): Promise<void> {
+    if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
     if (!current) return;
     try {
       const path = await pickers.tsv();
       if (!path) return;
+      if (transitionBusy || closePromise) return;
       const imported = await bridge.readTsv(path, current.exportSettings.multilinePolicy);
+      if (transitionBusy || closePromise) return;
       const succeeded = await projectStore.mutateProject((value) => mergeImportedTsv(value, imported, id, now()));
       if (!succeeded) {
         persistentError = get(projectStore).saveError ?? 'The TSV import could not be saved';
@@ -364,12 +461,14 @@
   }
 
   async function exportTsv(): Promise<void> {
+    if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
     if (!current) return;
     try {
       const defaultPath = `${basename(current.audioIdentity.canonicalPath).replace(/\.[^.]+$/, '')}.tsv`;
       const path = await pickers.exportTsv(defaultPath);
       if (!path) return;
+      if (transitionBusy || closePromise) return;
       await bridge.writeTsv(path, current);
       status = `Exported ${current.annotations.length} annotation${current.annotations.length === 1 ? '' : 's'}`;
     } catch (error) {
@@ -378,6 +477,7 @@
   }
 
   async function toggleFormat(): Promise<void> {
+    if (transitionBusy || closePromise) return;
     const succeeded = await projectStore.mutateProject((value) => ({
       ...value,
       displayFormat: value.displayFormat === 'seconds' ? 'clock' : 'seconds'
@@ -386,6 +486,7 @@
   }
 
   function setSelection(selection: Selection): void {
+    if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
     if (!current || current.audioIdentity.durationMs < 1) return;
     const startMs = Math.min(current.audioIdentity.durationMs - 1, Math.max(0, Math.round(selection.startMs)));
@@ -398,10 +499,12 @@
   }
 
   function togglePlay(): void {
+    if (transitionBusy || closePromise) return;
     void reportPromise(playback.state === 'playing' ? audioSession.pause() : audioSession.play());
   }
 
   function toggleLoop(): void {
+    if (transitionBusy || closePromise) return;
     let next = playback.loopRange ? null : project?.activeSelection ?? null;
     if (!playback.loopRange && !next && project && canLoop) {
       next = { startMs: project.draft.startMs, endMs: project.draft.endMs };
@@ -418,6 +521,7 @@
     if (event.isComposing || target?.closest('input, textarea, select')
       || (editable && editableValue !== 'false')
       || (target instanceof HTMLElement && target.isContentEditable)) return;
+    if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
     if (!current) return;
     const snapshot = get(audioSession);
@@ -467,23 +571,34 @@
   }
 
   async function shutdown(): Promise<boolean> {
-    operationGeneration += 1;
+    const shutdownGeneration = ++operationGeneration;
+    beginTransition(shutdownGeneration);
+    let completed = false;
     const hadAnalysis = activeAnalysisGeneration !== null;
     activeAnalysisGeneration = null;
     analysisProgress = null;
     if (hadAnalysis) {
       try { await bridge.cancelAnalysis(); } catch (error) { persistentError = errorText(error); }
     }
-    let flushed = false;
-    try { flushed = await projectStore.flush(); } catch (error) { persistentError = errorText(error); }
-    if (!flushed) {
-      persistentError = get(projectStore).saveError ?? 'The current project could not be saved before closing';
-      return false;
+    try {
+      let flushed = false;
+      const preservationFailuresBeforeDrain = nativePreservationFailures;
+      try { flushed = await projectStore.flush(); } catch (error) { persistentError = errorText(error); }
+      await audioOpenQueue;
+      if (!flushed) {
+        if (nativePreservationFailures === preservationFailuresBeforeDrain) {
+          persistentError = get(projectStore).saveError ?? 'The current project could not be saved before closing';
+        }
+        return false;
+      }
+      try { await audioSession.close(); } catch (error) { persistentError = errorText(error); }
+      disposeListeners();
+      try { await lifecycle.destroy(); } catch (error) { persistentError = errorText(error); }
+      completed = true;
+      return true;
+    } finally {
+      if (!completed) endTransition(shutdownGeneration);
     }
-    try { await audioSession.close(); } catch (error) { persistentError = errorText(error); }
-    disposeListeners();
-    try { await lifecycle.destroy(); } catch (error) { persistentError = errorText(error); }
-    return true;
   }
 
   const toolbarActions = {
@@ -494,7 +609,9 @@
     toggleFormat: () => void toggleFormat(),
     exportTsv: () => void exportTsv(),
     cancelAnalysis: () => void cancelAnalysis(),
-    setVolume: (value: number) => void reportPromise(audioSession.setVolume(value))
+    setVolume: (value: number) => {
+      if (!transitionBusy && !closePromise) void reportPromise(audioSession.setVolume(value));
+    }
   };
 </script>
 
@@ -511,10 +628,12 @@
     format={project?.displayFormat ?? 'seconds'}
     volume={playback.volume}
     {analysisPercent}
+    busy={transitionBusy}
     actions={toolbarActions}
   />
   <div class="app-status" role="status" aria-label="Operation status" aria-live="polite">{status}</div>
   {#if project}
+    <div class="project-workspace" aria-busy={transitionBusy} inert={transitionBusy}>
     <TimelineWorkspace
       durationMs={project.audioIdentity.durationMs}
       format={project.displayFormat}
@@ -522,14 +641,17 @@
       onchange={setSelection}
       {peaks}
       playheadMs={playback.positionMs}
+      disabled={transitionBusy}
     />
-    <AnnotationDashboard store={projectStore} />
+    <AnnotationDashboard store={projectStore} disabled={transitionBusy} />
     <AnnotationTable
       annotations={tableAnnotations}
       activeId={project.activeAnnotationId}
-      onselect={(annotationId) => projectStore.selectAnnotation(annotationId)}
-      onremove={(annotationId) => void projectStore.removeAnnotation(annotationId)}
+      disabled={transitionBusy}
+      onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
+      onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
     />
+    </div>
   {:else}
     <section class="empty-state">
       <p>Open an MP3 or WAV file to begin.</p>

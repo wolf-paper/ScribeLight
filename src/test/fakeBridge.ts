@@ -22,6 +22,7 @@ export type FakeBridge = MockNativeBridge & {
   emitProgress(progress: AnalysisProgress): void;
   savedProjects: Project[];
   snapshot: PlaybackSnapshot;
+  currentNativePath: string | null;
 };
 
 export function makeFakeBridge(options: {
@@ -35,6 +36,7 @@ export function makeFakeBridge(options: {
   const savedProjects: Project[] = [];
   const bridge: FakeBridge = {
     savedProjects,
+    currentNativePath: null,
     snapshot: {
       state: 'paused', positionMs: 100, durationMs: identity.durationMs,
       loopRange: null, volume: 1, underruns: 0
@@ -54,7 +56,15 @@ export function makeFakeBridge(options: {
       progressHandlers.add(handler);
       return vi.fn(() => progressHandlers.delete(handler));
     }),
-    audioOpen: vi.fn(async () => identity),
+    audioOpen: vi.fn(async (path: string) => {
+      const openedIdentity = path === identity.canonicalPath ? identity : { ...identity, canonicalPath: path };
+      bridge.currentNativePath = openedIdentity.canonicalPath;
+      bridge.snapshot = {
+        ...bridge.snapshot,
+        state: 'paused', positionMs: 0, durationMs: openedIdentity.durationMs, loopRange: null
+      };
+      return openedIdentity;
+    }),
     audioPlay: vi.fn(async () => { bridge.snapshot = { ...bridge.snapshot, state: 'playing' }; }),
     audioPause: vi.fn(async () => { bridge.snapshot = { ...bridge.snapshot, state: 'paused' }; }),
     audioSeek: vi.fn(async (milliseconds: number) => { bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds }; }),
@@ -62,7 +72,10 @@ export function makeFakeBridge(options: {
     audioClearLoop: vi.fn(async () => { bridge.snapshot = { ...bridge.snapshot, loopRange: null }; }),
     audioSetVolume: vi.fn(async (volume: number) => { bridge.snapshot = { ...bridge.snapshot, volume }; }),
     audioSnapshot: vi.fn(async () => bridge.snapshot),
-    audioClose: vi.fn(async () => { bridge.snapshot = { ...bridge.snapshot, state: 'empty', positionMs: 0, durationMs: 0, loopRange: null }; }),
+    audioClose: vi.fn(async () => {
+      bridge.currentNativePath = null;
+      bridge.snapshot = { ...bridge.snapshot, state: 'empty', positionMs: 0, durationMs: 0, loopRange: null };
+    }),
     emitProgress(progress) {
       for (const handler of progressHandlers) handler(progress);
     }
