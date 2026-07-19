@@ -21,7 +21,8 @@
   let pendingScrollLeft: number | null = null;
   let scrollGeneration = 0;
 
-  $: contentWidth = Math.max(viewportWidth, timelineContentWidth(durationMs, pixelsPerSecond));
+  $: contentWidth = timelineContentWidth(durationMs, pixelsPerSecond);
+  $: scrollSurfaceWidth = Math.max(viewportWidth, contentWidth);
 
   function scheduleScrollAfterRender(target: number): void {
     pendingScrollLeft = target;
@@ -82,15 +83,17 @@
 </script>
 
 <div bind:this={viewport} class="timeline-viewport" data-testid="timeline-viewport" aria-disabled={disabled} inert={disabled} on:wheel={wheel}>
-  <div class="timeline-content" data-testid="timeline-content" style:width={`${contentWidth}px`}>
-    <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="top-ruler" />
-    <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
-    <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
-      {#if peaks}
-        <WaveformView {peaks} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
-      {/if}
+  <div class="timeline-scroll-surface" data-testid="timeline-scroll-surface" style:width={`${scrollSurfaceWidth}px`}>
+    <div class="timeline-content" data-testid="timeline-content" style:width={`${contentWidth}px`}>
+      <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="top-ruler" />
+      <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
+      <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
+        {#if peaks}
+          <WaveformView {peaks} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
+        {/if}
+      </div>
+      <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />
     </div>
-    <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />
   </div>
 </div>
 
@@ -101,6 +104,7 @@
   }
 
   .timeline-content {
+    min-width: 0;
     position: relative;
   }
 

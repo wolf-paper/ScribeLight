@@ -10,6 +10,12 @@ const peaks: PeakData = {
   channels: [[-1, 0, 1]]
 };
 
+const shortPeaks: PeakData = {
+  ...peaks,
+  totalFrames: 9_600,
+  durationMs: 200
+};
+
 interface RegionDouble {
   id: string;
   start: number;
@@ -154,6 +160,24 @@ describe('createWaveformAdapter', () => {
     expect(fixture.wave.zoom).toHaveBeenCalledWith(250);
     adapter.setPlayhead(2_000);
     expect(fixture.renderer.renderProgress).toHaveBeenLastCalledWith(1, false);
+  });
+
+  it('does not stretch a capped sub-second waveform beyond the shared duration width', () => {
+    const fixture = createDouble();
+    const adapter = createWaveformAdapter(document.createElement('div'), shortPeaks, vi.fn(), fixture.factory);
+    const options = fixture.factoryOptions as Record<string, unknown>;
+
+    expect(options.duration).toBe(0.2);
+    expect(options.fillParent).toBe(false);
+
+    adapter.setSelection({ startMs: 50, endMs: 200 });
+    adapter.setPlayhead(200);
+    adapter.setZoom(1_000);
+    fixture.waveListeners.get('ready')?.();
+
+    expect(fixture.wave.zoom).toHaveBeenCalledWith(1_000);
+    expect(fixture.regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({ start: 0.05, end: 0.2 }));
+    expect(fixture.renderer.renderProgress).toHaveBeenCalledWith(1, false);
   });
 
   it('stops drag selection, unsubscribes listeners, and destroys only once', () => {

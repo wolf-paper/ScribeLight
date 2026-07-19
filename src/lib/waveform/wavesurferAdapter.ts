@@ -60,7 +60,8 @@ export function createWaveformAdapter(
     waveColor: '#66758a',
     progressColor: '#8ba8d8',
     cursorWidth: 0,
-    normalize: true
+    normalize: true,
+    fillParent: false
   });
   const regions = wave.registerPlugin(Regions.create());
   let region: ReturnType<typeof regions.addRegion> | null = null;

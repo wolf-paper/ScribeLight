@@ -94,8 +94,41 @@ describe('TimelineWorkspace', () => {
     window.dispatchEvent(new Event('resize'));
     await Promise.resolve();
 
-    expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '500px' });
-    expect(layerWidths()).toEqual(['500px', '500px', '500px', '500px']);
+    expect(screen.getByTestId('timeline-scroll-surface')).toHaveStyle({ width: '500px' });
+    expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '0px' });
+    expect(layerWidths()).toEqual(['0px', '0px', '0px', '0px']);
+  });
+
+  it('keeps a capped sub-second clip on one exact time-to-pixel endpoint without collapsing the viewport', async () => {
+    const onchange = vi.fn();
+    render(TimelineWorkspace, {
+      durationMs: 200,
+      format: 'seconds',
+      selection: { startMs: 50, endMs: 200 },
+      playheadMs: 200,
+      onchange
+    });
+    const viewport = screen.getByTestId('timeline-viewport');
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 900 });
+
+    window.dispatchEvent(new Event('resize'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('timeline-scroll-surface')).toHaveStyle({ width: '900px' });
+      expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '200px' });
+    });
+
+    const content = screen.getByTestId('timeline-content');
+    const layers = Array.from(content.querySelectorAll<HTMLElement>('[data-timeline-layer]'));
+    expect(layers.map((layer) => layer.style.width)).toEqual(['200px', '200px', '200px', '200px']);
+
+    const topRulerTicks = content.querySelectorAll<HTMLElement>('[data-timeline-layer="top-ruler"] .tick');
+    expect(topRulerTicks.item(topRulerTicks.length - 1)).toHaveStyle({ left: '200px' });
+    expect(screen.getByLabelText('Loop selection').querySelector('.selection')).toHaveStyle({
+      left: '50px',
+      width: '150px'
+    });
+    expect(content.querySelector<HTMLElement>('[data-timeline-layer="waveform"]')).toHaveStyle({ width: '200px' });
   });
 
   it('initializes a short nonempty clip at the measured whole-clip fit zoom', async () => {
