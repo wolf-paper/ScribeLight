@@ -14,6 +14,7 @@ async function openFixture(page: Page, story: string, reset = true): Promise<voi
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Settings' })).toBeEnabled();
+  await expect(page.getByRole('alert', { name: 'Application error' })).toHaveCount(0);
 }
 
 async function timelineMetrics(page: Page, pointerX: number) {

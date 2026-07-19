@@ -3,6 +3,8 @@
 **Date:** 2026-07-18  
 **Status:** Approved in conversation; pending written-spec review
 
+This document defines Lightscribe's audio, annotation, persistence, and interchange behavior. The approved desktop presentation and workflow are defined by the [Lightscribe UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md), which supersedes the original stacked-dashboard layout and legacy intelligibility vocabulary in this document.
+
 ## 1. Product Summary
 
 Lightscribe is a lightweight desktop audio player and annotation workspace for transcriptionists. It displays an MP3 or WAV waveform, lets the annotator create and repeatedly play precise loop selections, and associates each selection with structured transcript metadata. Projects persist locally and annotations export as UTF-8 TSV.
@@ -65,14 +67,18 @@ WaveSurfer is a renderer and pointer-interaction surface. It is not the authorit
 4. **Annotation dashboard**
    - Edits the active selection's structured fields.
    - Provides explicit Add, Update, Clear, and Remove actions.
-   - Manages speakers and acoustic tags.
+   - Uses the fixed event, intelligibility, overlap, and confidence vocabularies.
 
-5. **Annotation table**
-   - Lists committed events in chronological order.
+5. **Settings dialog**
+   - Owns application appearance, project speaker and acoustic-tag administration, and the project's multiline TSV export policy.
+   - Applies one of the four approved application-global palettes without storing the choice in project JSON or TSV.
+
+6. **Annotation list**
+   - Lists committed events in chronological order in a continuously scrollable list with no pagination.
    - Loads a row into the selection and editor for replay or editing.
    - Keeps simultaneous overlapping events as separate rows.
 
-6. **Project store**
+7. **Project store**
    - Holds the project configuration, committed annotations, active selection, editor draft, time format, and current annotation identity.
    - Serializes only portable application data, not WaveSurfer or native-engine objects.
 
@@ -129,6 +135,10 @@ The native frame counter is authoritative. The Svelte playhead may interpolate b
 
 ## 7. Interface Design
 
+The interface follows the [Lightscribe UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md). The Tauri window opens at 1280x800 with a 1280px minimum width and no document-level horizontal overflow. A compact title/logo toolbar sits above the full-width waveform timeline; the lower workspace keeps the continuously scrollable Saved annotations list on the left and the Selection inspector on the right.
+
+Ion Magenta is the default palette. Settings also offers Arctic Steel, Ultraviolet Grid, and Crimson Scope. Palette selection applies across the application, persists under `lightscribe.palette`, and remains independent of project JSON and TSV data.
+
 ### 7.1 Clip toolbar
 
 The toolbar contains:
@@ -140,7 +150,9 @@ The toolbar contains:
 - Loop enabled toggle
 - Volume
 - Time-format toggle
+- Import TSV
 - Export TSV
+- Settings
 
 Supported display formats are:
 
@@ -189,18 +201,18 @@ The dashboard shows the exact selection start and end, then provides:
 
 - Event type
 - Speaker
-- Speaker management
 - Transcription
 - Intelligibility
 - Overlap
 - Confidence
 - Acoustic tags
-- Acoustic-tag management
 - Notes
 - Add or Update
 - Clear
 
 Defaults are optimized for speech annotation while remaining portable.
+
+Speaker and acoustic-tag management, palette selection, and the multiline TSV export policy are owned by Settings rather than the selection inspector. The complete inspector, Settings, list, and accessibility contracts are specified in the [UI rework design](2026-07-19-lightscribe-ui-rework-design.md).
 
 ## 8. Annotation and Project Model
 
@@ -254,10 +266,12 @@ Initial event types:
 
 Initial intelligibility values:
 
-- `intelligible`
+- `highly_intelligible`
 - `partially_intelligible`
 - `unintelligible`
 - `not_applicable`
+
+Legacy project and TSV values of `intelligible` are accepted and normalized to `highly_intelligible`; subsequent saves and exports use only the canonical value. See [Intelligibility Values in the UI rework design](2026-07-19-lightscribe-ui-rework-design.md#intelligibility-values).
 
 Overlap values:
 
@@ -369,7 +383,7 @@ notes
 
 ### 11.3 Multiline handling
 
-Each project selects one export policy:
+Each project selects one export policy in Settings:
 
 1. Replace line breaks with the literal sequence `\n`.
 2. Replace line breaks with spaces.
@@ -405,7 +419,7 @@ Structural errors block Add/Update or export as appropriate:
 Initial annotation rules derived from the target workflow:
 
 - A `speech` annotation requires intelligibility, speaker, overlap, and confidence.
-- An intelligible or partially intelligible speech annotation requires transcription text.
+- Highly or partially intelligible speech requires transcription text.
 - Unintelligible speech may have blank transcription.
 - A `non_speech` annotation defaults to blank transcription, `not_applicable` intelligibility, and the reserved `none` speaker.
 

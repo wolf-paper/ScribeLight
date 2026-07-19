@@ -179,6 +179,10 @@ export function browserTestProps() {
 
   return {
     bridge,
+    lifecycle: {
+      onCloseRequested: async () => () => undefined,
+      destroy: async () => undefined
+    },
     pickers: {
       audio: async () => new URLSearchParams(location.search).get('fixture'),
       tsv: async () => 'pass-a.annotation.private.tsv',
