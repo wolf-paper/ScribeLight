@@ -22,6 +22,7 @@ const regionOptions = {
   drag: true,
   resize: true
 };
+const canonicalRegionId = 'lightscribe-canonical-selection';
 
 function clamp(value: number, maximum: number): number {
   return Math.min(Math.max(value, 0), maximum);
@@ -50,14 +51,11 @@ export function createWaveformAdapter(
   onchange: (selection: Selection) => void,
   factory: WaveformFactory = WaveSurfer.create
 ): WaveformAdapter {
-  const silentMedia = document.createElement('audio');
   const wave = factory({
     container,
     peaks: peaks.channels,
     duration: peaks.durationMs / 1_000,
-    media: silentMedia,
-    autoplay: false,
-    interact: true,
+    interact: false,
     dragToSeek: false,
     waveColor: '#66758a',
     progressColor: '#8ba8d8',
@@ -66,9 +64,56 @@ export function createWaveformAdapter(
   });
   const regions = wave.registerPlugin(Regions.create());
   let region: ReturnType<typeof regions.addRegion> | null = null;
+  let desiredSelection: Selection | null = null;
+  let desiredPlayheadMs = 0;
+  let desiredZoom: number | null = null;
+  let ready = false;
   let syncing = false;
   let destroyed = false;
   const stopDrag = regions.enableDragSelection(regionOptions);
+
+  const applySelection = (): void => {
+    if (!ready || destroyed) return;
+    syncing = true;
+    try {
+      if (!desiredSelection) {
+        regions.clearRegions();
+        region = null;
+      } else if (region) {
+        region.setOptions({
+          start: desiredSelection.startMs / 1_000,
+          end: desiredSelection.endMs / 1_000
+        });
+      } else {
+        region = regions.addRegion({
+          ...regionOptions,
+          id: canonicalRegionId,
+          start: desiredSelection.startMs / 1_000,
+          end: desiredSelection.endMs / 1_000
+        });
+      }
+    } finally {
+      syncing = false;
+    }
+  };
+
+  const applyPlayhead = (): void => {
+    if (!ready || destroyed) return;
+    const duration = peaks.durationMs;
+    const fraction = Number.isFinite(duration) && duration > 0
+      ? clamp(desiredPlayheadMs / duration, 1)
+      : 0;
+    wave.getRenderer().renderProgress(fraction, false);
+  };
+
+  const applyZoom = (): void => {
+    if (!ready || destroyed || desiredZoom === null) return;
+    try {
+      wave.zoom(desiredZoom);
+    } catch {
+      // WaveSurfer rejects zoom before its decoded peaks are available.
+    }
+  };
 
   const reportUserSelection = (next: typeof region): void => {
     if (destroyed || syncing || !next || next !== region) return;
@@ -76,35 +121,39 @@ export function createWaveformAdapter(
   };
   const stopCreated = regions.on('region-created', (next) => {
     if (destroyed || syncing) return;
+    if (next.id === canonicalRegionId) {
+      if (!desiredSelection || (region && region !== next)) next.remove();
+      else region = next;
+      return;
+    }
     if (region && region !== next) region.remove();
     region = next;
     reportUserSelection(next);
   });
   const stopUpdated = regions.on('region-updated', reportUserSelection);
+  const stopReady = wave.on('ready', () => {
+    if (destroyed) return;
+    ready = true;
+    applySelection();
+    applyPlayhead();
+    applyZoom();
+  });
 
   return {
     setSelection(selection) {
       if (destroyed) return;
-      syncing = true;
-      if (!selection) {
-        regions.clearRegions();
-        region = null;
-      } else if (region) {
-        region.setOptions({ start: selection.startMs / 1_000, end: selection.endMs / 1_000 });
-      } else {
-        region = regions.addRegion({
-          ...regionOptions,
-          start: selection.startMs / 1_000,
-          end: selection.endMs / 1_000
-        });
-      }
-      syncing = false;
+      desiredSelection = selection;
+      applySelection();
     },
     setPlayhead(milliseconds) {
-      if (!destroyed) wave.setTime(milliseconds / 1_000);
+      if (destroyed) return;
+      desiredPlayheadMs = Number.isFinite(milliseconds) ? milliseconds : 0;
+      applyPlayhead();
     },
     setZoom(pixelsPerSecond) {
-      if (!destroyed) wave.zoom(pixelsPerSecond);
+      if (destroyed || !Number.isFinite(pixelsPerSecond) || pixelsPerSecond <= 0) return;
+      desiredZoom = pixelsPerSecond;
+      applyZoom();
     },
     destroy() {
       if (destroyed) return;
@@ -112,6 +161,7 @@ export function createWaveformAdapter(
       stopDrag();
       stopCreated();
       stopUpdated();
+      stopReady();
       wave.destroy();
     }
   };

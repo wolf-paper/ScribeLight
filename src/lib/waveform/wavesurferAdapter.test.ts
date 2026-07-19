@@ -9,88 +9,145 @@ const peaks: PeakData = {
   channels: [[-1, 0, 1]]
 };
 
-function createDouble() {
-  const listeners = new Map<string, (region: RegionDouble) => void>();
-  const disposers = [vi.fn(), vi.fn()];
-  const regions = {
-    addRegion: vi.fn(() => createRegion()),
-    clearRegions: vi.fn(),
-    enableDragSelection: vi.fn(() => vi.fn()),
-    on: vi.fn((event: string, listener: (region: RegionDouble) => void) => {
-      listeners.set(event, listener);
-      return disposers[listeners.size - 1];
-    })
-  };
-  const wave = {
-    registerPlugin: vi.fn(() => regions),
-    setTime: vi.fn(),
-    zoom: vi.fn(),
-    destroy: vi.fn()
-  };
-
-  return { listeners, disposers, regions, wave };
-}
-
 interface RegionDouble {
+  id: string;
   start: number;
   end: number;
   setOptions: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
 }
 
-function createRegion(start = 0, end = 0): RegionDouble {
-  return { start, end, setOptions: vi.fn(), remove: vi.fn() };
+function createDouble() {
+  const regionListeners = new Map<string, (region: RegionDouble) => void>();
+  const waveListeners = new Map<string, () => void>();
+  const disposers = [vi.fn(), vi.fn(), vi.fn()];
+  const renderer = { renderProgress: vi.fn() };
+  const regions = {
+    addRegion: vi.fn((options: { id: string; start: number; end: number }) => {
+      const region: RegionDouble = {
+        id: options.id,
+        start: options.start,
+        end: options.end,
+        setOptions: vi.fn((next: { start?: number; end?: number }) => {
+          region.start = next.start ?? region.start;
+          region.end = next.end ?? region.end;
+          regionListeners.get('region-updated')?.(region);
+        }),
+        remove: vi.fn()
+      };
+      return region;
+    }),
+    clearRegions: vi.fn(),
+    enableDragSelection: vi.fn(() => vi.fn()),
+    on: vi.fn((event: string, listener: (region: RegionDouble) => void) => {
+      regionListeners.set(event, listener);
+      return disposers[regionListeners.size - 1];
+    })
+  };
+  const wave = {
+    registerPlugin: vi.fn(() => regions),
+    on: vi.fn((event: string, listener: () => void) => {
+      waveListeners.set(event, listener);
+      return disposers[2];
+    }),
+    getRenderer: vi.fn(() => renderer),
+    zoom: vi.fn(),
+    destroy: vi.fn()
+  };
+  let factoryOptions: unknown;
+  const factory = ((options: unknown) => {
+    factoryOptions = options;
+    return wave as never;
+  }) as never;
+
+  return {
+    factory,
+    get factoryOptions() { return factoryOptions; },
+    regionListeners,
+    waveListeners,
+    disposers,
+    renderer,
+    regions,
+    wave
+  };
 }
 
 describe('createWaveformAdapter', () => {
-  it('creates, updates, and clears one visual region without programmatic feedback', () => {
-    const { regions, wave } = createDouble();
+  it('waits for ready and uses only the latest canonical selection after clear and replacement', () => {
+    const { factory, regionListeners, waveListeners, regions } = createDouble();
     const changed = vi.fn();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, () => wave as never);
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, factory);
 
     adapter.setSelection({ startMs: 100, endMs: 200 });
-    const region = regions.addRegion.mock.results[0]?.value as RegionDouble;
-    expect(regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({ start: 0.1, end: 0.2 }));
-    expect(changed).not.toHaveBeenCalled();
-
-    adapter.setSelection({ startMs: 110, endMs: 210 });
-    expect(region.setOptions).toHaveBeenCalledWith({ start: 0.11, end: 0.21 });
-    expect(changed).not.toHaveBeenCalled();
-
     adapter.setSelection(null);
-    expect(regions.clearRegions).toHaveBeenCalledOnce();
-    expect(changed).not.toHaveBeenCalled();
-  });
-
-  it('normalizes clamped integer-millisecond edits and replaces a second drag region', () => {
-    const { listeners, regions, wave } = createDouble();
-    const changed = vi.fn();
-    createWaveformAdapter(document.createElement('div'), peaks, changed, () => wave as never);
-    const first = createRegion(0.3334, 0.3336);
-    const second = createRegion(-0.4, 0);
-
-    listeners.get('region-created')?.(first);
-    first.start = 0.9996;
-    first.end = 2;
-    listeners.get('region-updated')?.(first);
-    listeners.get('region-created')?.(second);
-
-    expect(changed).toHaveBeenNthCalledWith(1, { startMs: 333, endMs: 334 });
-    expect(changed).toHaveBeenNthCalledWith(2, { startMs: 999, endMs: 1_000 });
-    expect(first.remove).toHaveBeenCalledOnce();
-    expect(changed).toHaveBeenNthCalledWith(3, { startMs: 0, endMs: 1 });
+    adapter.setSelection({ startMs: 300, endMs: 400 });
     expect(regions.addRegion).not.toHaveBeenCalled();
+
+    waveListeners.get('ready')?.();
+    expect(regions.addRegion).toHaveBeenCalledOnce();
+    expect(regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'lightscribe-canonical-selection',
+      start: 0.3,
+      end: 0.4
+    }));
+    const canonical = regions.addRegion.mock.results[0]?.value as RegionDouble;
+    regionListeners.get('region-created')?.(canonical);
+    expect(changed).not.toHaveBeenCalled();
+
+    adapter.setSelection({ startMs: 350, endMs: 450 });
+    expect(canonical.setOptions).toHaveBeenCalledWith({ start: 0.35, end: 0.45 });
+    expect(changed).not.toHaveBeenCalled();
+
+    canonical.start = 0.3334;
+    canonical.end = 0.3336;
+    regionListeners.get('region-updated')?.(canonical);
+    expect(changed).toHaveBeenCalledWith({ startMs: 333, endMs: 334 });
   });
 
-  it('forwards renderer-only playhead and synchronized zoom updates', () => {
-    const { wave } = createDouble();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, vi.fn(), () => wave as never);
+  it('removes the prior region when a user creates a second one and normalizes user edits', () => {
+    const { factory, regionListeners, waveListeners, regions } = createDouble();
+    const changed = vi.fn();
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, factory);
 
+    adapter.setSelection({ startMs: 100, endMs: 200 });
+    waveListeners.get('ready')?.();
+    const canonical = regions.addRegion.mock.results[0]?.value as RegionDouble;
+    regionListeners.get('region-created')?.(canonical);
+    const userRegion: RegionDouble = {
+      id: 'user-region',
+      start: -0.4,
+      end: 0,
+      setOptions: vi.fn(),
+      remove: vi.fn()
+    };
+
+    regionListeners.get('region-created')?.(userRegion);
+    expect(canonical.remove).toHaveBeenCalledOnce();
+    expect(changed).toHaveBeenLastCalledWith({ startMs: 0, endMs: 1 });
+
+    userRegion.start = 0.9996;
+    userRegion.end = 2;
+    regionListeners.get('region-updated')?.(userRegion);
+    expect(changed).toHaveBeenLastCalledWith({ startMs: 999, endMs: 1_000 });
+  });
+
+  it('keeps WaveSurfer renderer-only and applies pending playhead and zoom after ready', () => {
+    const fixture = createDouble();
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, vi.fn(), fixture.factory);
+    const options = fixture.factoryOptions as Record<string, unknown>;
+
+    expect(options.interact).toBe(false);
+    expect(options).not.toHaveProperty('media');
     adapter.setPlayhead(275);
     adapter.setZoom(250);
+    expect(fixture.renderer.renderProgress).not.toHaveBeenCalled();
+    expect(fixture.wave.zoom).not.toHaveBeenCalled();
 
-    expect(wave.setTime).toHaveBeenCalledWith(0.275);
-    expect(wave.zoom).toHaveBeenCalledWith(250);
+    fixture.waveListeners.get('ready')?.();
+    expect(fixture.renderer.renderProgress).toHaveBeenCalledWith(0.275, false);
+    expect(fixture.wave.zoom).toHaveBeenCalledWith(250);
+    adapter.setPlayhead(2_000);
+    expect(fixture.renderer.renderProgress).toHaveBeenLastCalledWith(1, false);
   });
 
   it('stops drag selection, unsubscribes listeners, and destroys only once', () => {
@@ -104,6 +161,7 @@ describe('createWaveformAdapter', () => {
     expect(stopDrag).toHaveBeenCalledOnce();
     expect(disposers[0]).toHaveBeenCalledOnce();
     expect(disposers[1]).toHaveBeenCalledOnce();
+    expect(disposers[2]).toHaveBeenCalledOnce();
     expect(wave.destroy).toHaveBeenCalledOnce();
   });
 });
