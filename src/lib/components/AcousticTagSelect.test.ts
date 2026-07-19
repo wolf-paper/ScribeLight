@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import AcousticTagSelect from './AcousticTagSelect.svelte';
 
@@ -56,6 +56,43 @@ describe('AcousticTagSelect', () => {
     expect(search).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'breath' }).id);
     await fireEvent.keyDown(search, { key: 'ArrowUp' });
     expect(search).toHaveAttribute('aria-activedescendant', screen.getByRole('option', { name: 'quiet_dialogue' }).id);
+  });
+
+  it('scrolls the newly active option into view while navigating an overflowing list', async () => {
+    const overflowingTags = Array.from({ length: 20 }, (_, index) => ({
+      id: `tag-${index + 1}`,
+      label: `tag_${index + 1}`
+    }));
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: scrollIntoView
+    });
+
+    try {
+      render(AcousticTagSelect, { tags: overflowingTags, selectedIds: [], onchange: vi.fn() });
+      await fireEvent.click(screen.getByRole('combobox', { name: 'Acoustic tags' }));
+      const search = screen.getByRole('searchbox');
+
+      for (let index = 0; index < 12; index += 1) {
+        await fireEvent.keyDown(search, { key: 'ArrowDown' });
+      }
+
+      const activeOption = screen.getByRole('option', { name: 'tag_12' });
+      expect(search).toHaveAttribute('aria-activedescendant', activeOption.id);
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
+        expect(scrollIntoView.mock.instances.at(-1)).toBe(activeOption);
+      });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      }
+    }
   });
 
   it('closes with Escape and restores focus to the combobox', async () => {

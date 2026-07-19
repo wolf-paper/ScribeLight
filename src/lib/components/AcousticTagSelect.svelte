@@ -80,6 +80,11 @@
     activeIndex = -1;
   }
 
+  async function scrollOptionIntoView(tag: LabelDefinition): Promise<void> {
+    await tick();
+    document.getElementById(optionId(tag))?.scrollIntoView?.({ block: 'nearest' });
+  }
+
   function searchKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -90,11 +95,13 @@
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       activeIndex = (activeIndex + 1) % filteredTags.length;
+      void scrollOptionIntoView(filteredTags[activeIndex]);
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
       activeIndex = activeIndex <= 0 ? filteredTags.length - 1 : activeIndex - 1;
+      void scrollOptionIntoView(filteredTags[activeIndex]);
       return;
     }
     if (event.key === 'Enter' && activeIndex >= 0) {
