@@ -2075,6 +2075,7 @@ dependencies = [
  "csv",
  "hound",
  "rtrb",
+ "same-file",
  "serde",
  "serde_json",
  "symphonia",

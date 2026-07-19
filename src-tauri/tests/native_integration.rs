@@ -387,6 +387,36 @@ fn production_tsv_export_rejects_source_aliases_and_non_tsv_destinations() {
     assert_eq!(source_digest(&source), source_before);
 }
 
+#[cfg(windows)]
+#[test]
+fn production_tsv_export_rejects_a_hard_link_alias_to_the_source_audio() {
+    let directory = tempfile::tempdir().expect("temporary hard-link export directory");
+    let source = directory.path().join("source-audio.wav");
+    std::fs::copy(fixture("annotation-audio-test.wav"), &source).expect("copy WAV source");
+    let destination = directory.path().join("source-hard-link.tsv");
+    std::fs::hard_link(&source, &destination).expect("create hard-link destination alias");
+    let identity = AudioDecoder::open(&source)
+        .expect("inspect copied WAV source")
+        .identity()
+        .clone();
+    let project = populated_export_project(identity);
+    let original_bytes = std::fs::read(&source).expect("read original source bytes");
+    let original_digest = source_digest(&source);
+    assert_eq!(source_digest(&destination), original_digest);
+
+    let error = write_project_tsv_export_to_path(&destination, &project)
+        .expect_err("hard-link source alias must not be replaced by TSV output");
+
+    assert!(matches!(
+        error,
+        lightscribe_lib::error::AppError::Tsv(message) if message.contains("source audio")
+    ));
+    assert_eq!(std::fs::read(&source).unwrap(), original_bytes);
+    assert_eq!(std::fs::read(&destination).unwrap(), original_bytes);
+    assert_eq!(source_digest(&source), original_digest);
+    assert_eq!(source_digest(&destination), original_digest);
+}
+
 #[test]
 fn analysis_import_and_export_leave_source_hash_size_and_directory_unchanged() {
     let path = fixture("annotation-audio-test.wav");

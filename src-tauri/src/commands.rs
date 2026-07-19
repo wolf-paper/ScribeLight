@@ -242,7 +242,12 @@ fn canonical_paths_match(left: &Path, right: &Path) -> bool {
 
 fn ensure_export_is_not_source(destination: &Path, source: &Path) -> Result<(), AppError> {
     let destination = canonical_export_destination(destination)?;
-    if canonical_paths_match(&destination, source) {
+    let same_existing_file = match same_file::is_same_file(&destination, source) {
+        Ok(matches) => matches,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    if canonical_paths_match(&destination, source) || same_existing_file {
         return Err(AppError::Tsv(
             "TSV export destination must not replace the source audio".to_owned(),
         ));

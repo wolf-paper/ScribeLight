@@ -31,6 +31,7 @@ symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm
 rtrb = "0.3.4"
 cpal = "0.17"
 crossbeam-channel = "0.5.16"
+same-file = "1.0.6"
 
 [dev-dependencies]
 hound = "3.5.1"
