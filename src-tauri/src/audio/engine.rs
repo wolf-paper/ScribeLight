@@ -3,7 +3,7 @@ use crate::{
         decoder::AudioDecoder,
         loop_cursor::LoopRange,
         render::{RenderCore, RenderState},
-        worker::{run_worker, DecoderFrameSource, EngineCommand, WorkerRequest},
+        worker::{run_worker, DecoderFrameSource, EngineCommand, WorkerRequest, WorkerStatus},
     },
     error::AppError,
     model::{AudioIdentity, PlaybackSnapshot, PlaybackState, Selection},
@@ -19,6 +19,7 @@ use std::{
 
 const COMMAND_CAPACITY: usize = 32;
 const WORKER_FILL_BATCH_FRAMES: usize = 256;
+const WORKER_READY_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn ring_capacity_frames(sample_rate: u32) -> usize {
     sample_rate as usize
@@ -103,7 +104,7 @@ fn finite_clamped_sample(sample: f32) -> f32 {
 
 struct ActivePlayback {
     command_tx: Option<Sender<EngineCommand>>,
-    status_rx: Option<Receiver<Result<(), AppError>>>,
+    status_rx: Option<Receiver<WorkerStatus>>,
     render_state: Arc<RenderState>,
     stream: Option<cpal::Stream>,
     worker: Option<JoinHandle<()>>,
@@ -151,8 +152,9 @@ impl ActivePlayback {
         }
         if let Some(status_rx) = self.status_rx.take() {
             match status_rx.try_recv() {
-                Ok(Err(error)) => shutdown_error = Some(error),
-                Ok(Ok(())) | Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+                Ok(WorkerStatus::Error(error)) => shutdown_error = Some(error),
+                Ok(WorkerStatus::Ready | WorkerStatus::Stopped)
+                | Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
             }
         }
         shutdown_error.map_or(Ok(()), Err)
@@ -213,7 +215,7 @@ impl AudioEngine {
         )?;
 
         let (command_tx, command_rx) = bounded(COMMAND_CAPACITY);
-        let (status_tx, status_rx) = bounded(1);
+        let (status_tx, status_rx) = bounded(2);
         let worker_state = Arc::clone(&render_state);
         let lookahead_frames = (capacity / 4).max(1);
         let worker = std::thread::Builder::new()
@@ -236,7 +238,7 @@ impl AudioEngine {
                 AppError::Audio(format!("Cannot start audio decoder worker: {error}"))
             })?;
 
-        let mut replacement = ActivePlayback {
+        let replacement = ActivePlayback {
             command_tx: Some(command_tx),
             status_rx: Some(status_rx),
             render_state,
@@ -246,19 +248,31 @@ impl AudioEngine {
             duration_frames,
             loop_range: None,
         };
-        if let Err(error) = replacement
-            .stream
-            .as_ref()
-            .expect("replacement stream was just constructed")
-            .play()
-        {
-            let _ = replacement.shutdown();
-            return Err(AppError::Audio(format!(
-                "Cannot start the default audio output stream: {error}"
-            )));
-        }
-
-        let mut previous = self.active.replace(replacement);
+        let ready = await_worker_ready(
+            replacement.status_rx.as_ref().ok_or_else(|| {
+                AppError::Audio("Playback worker status channel is unavailable".to_owned())
+            })?,
+            WORKER_READY_TIMEOUT,
+        );
+        let mut previous =
+            match transact_replacement(&mut self.active, replacement, ready, |active| {
+                active
+                    .stream
+                    .as_ref()
+                    .ok_or_else(|| AppError::Audio("Playback stream is unavailable".to_owned()))?
+                    .play()
+                    .map_err(|error| {
+                        AppError::Audio(format!(
+                            "Cannot start the default audio output stream: {error}"
+                        ))
+                    })
+            }) {
+                Ok(previous) => previous,
+                Err((error, mut rejected)) => {
+                    let _ = rejected.shutdown();
+                    return Err(error);
+                }
+            };
         self.last_error = None;
         if let Some(active) = previous.as_mut() {
             let _ = active.shutdown();
@@ -268,9 +282,7 @@ impl AudioEngine {
 
     pub fn play(&self) -> Result<(), AppError> {
         let active = self.active()?;
-        active.send_command(EngineCommand::Play)?;
-        active.render_state.playing.store(true, Ordering::Release);
-        Ok(())
+        active.send_command(EngineCommand::Play)
     }
 
     pub fn pause(&self) -> Result<(), AppError> {
@@ -331,7 +343,9 @@ impl AudioEngine {
         };
 
         if active.render_state.stream_error.load(Ordering::Acquire) {
-            self.last_error = Some("Audio output stream failed".to_owned());
+            if self.last_error.is_none() {
+                self.last_error = Some("Audio output stream failed".to_owned());
+            }
             active.render_state.playing.store(false, Ordering::Release);
         }
         let state = if let Some(error) = self.last_error.as_ref() {
@@ -378,22 +392,11 @@ impl AudioEngine {
     }
 
     fn refresh_worker_status(&mut self) {
-        let Some(active) = self.active.as_ref() else {
+        let Some(active) = self.active.as_mut() else {
             return;
         };
-        let Some(status_rx) = active.status_rx.as_ref() else {
-            return;
-        };
-        match status_rx.try_recv() {
-            Ok(Err(error)) => {
-                self.last_error = Some(error.to_string());
-                active.render_state.playing.store(false, Ordering::Release);
-            }
-            Ok(Ok(())) => {
-                self.last_error = Some("Playback worker stopped unexpectedly".to_owned());
-                active.render_state.playing.store(false, Ordering::Release);
-            }
-            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+        if consume_worker_terminal(&mut active.status_rx, &mut self.last_error) {
+            active.render_state.playing.store(false, Ordering::Release);
         }
     }
 }
@@ -410,6 +413,61 @@ impl Drop for AudioEngine {
             let _ = active.shutdown();
         }
     }
+}
+
+fn await_worker_ready(
+    status_rx: &Receiver<WorkerStatus>,
+    timeout: Duration,
+) -> Result<(), AppError> {
+    match status_rx.recv_timeout(timeout) {
+        Ok(WorkerStatus::Ready) => Ok(()),
+        Ok(WorkerStatus::Error(error)) => Err(error),
+        Ok(WorkerStatus::Stopped) => Err(AppError::Audio(
+            "Playback worker stopped before initial audio was ready".to_owned(),
+        )),
+        Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(AppError::Audio(
+            "Playback worker timed out preparing initial audio".to_owned(),
+        )),
+        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(AppError::Audio(
+            "Playback worker disconnected before initial audio was ready".to_owned(),
+        )),
+    }
+}
+
+fn transact_replacement<T>(
+    current: &mut Option<T>,
+    replacement: T,
+    ready: Result<(), AppError>,
+    start: impl FnOnce(&T) -> Result<(), AppError>,
+) -> Result<Option<T>, (AppError, T)> {
+    if let Err(error) = ready {
+        return Err((error, replacement));
+    }
+    if let Err(error) = start(&replacement) {
+        return Err((error, replacement));
+    }
+    Ok(current.replace(replacement))
+}
+
+fn consume_worker_terminal(
+    status_rx: &mut Option<Receiver<WorkerStatus>>,
+    last_error: &mut Option<String>,
+) -> bool {
+    let Some(receiver) = status_rx.as_ref() else {
+        return false;
+    };
+    let terminal = match receiver.try_recv() {
+        Ok(WorkerStatus::Ready) | Err(TryRecvError::Empty) => return false,
+        Ok(WorkerStatus::Error(error)) => Some(error.to_string()),
+        Ok(WorkerStatus::Stopped) | Err(TryRecvError::Disconnected) => {
+            Some("Playback worker stopped unexpectedly".to_owned())
+        }
+    };
+    if last_error.is_none() {
+        *last_error = terminal;
+    }
+    *status_rx = None;
+    true
 }
 
 fn select_output_config(
@@ -566,6 +624,7 @@ fn build_u16_stream(
 mod tests {
     use super::*;
     use crate::model::{PlaybackSnapshot, PlaybackState, Selection};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn ring_capacity_is_exactly_one_second_of_source_frames() {
@@ -675,5 +734,77 @@ mod tests {
             serde_json::to_value(crate::error::AppError::Audio("bad".to_owned())).unwrap(),
             serde_json::json!({ "kind": "audio", "message": "bad" })
         );
+    }
+
+    #[test]
+    fn worker_ready_wait_reports_error_and_timeout_without_installing_replacement() {
+        let (error_tx, error_rx) = bounded(2);
+        error_tx
+            .send(WorkerStatus::Error(AppError::Audio(
+                "initial decode failed".to_owned(),
+            )))
+            .unwrap();
+        let ready = await_worker_ready(&error_rx, Duration::from_secs(1));
+        let mut current = Some("existing playback");
+        let start_called = AtomicBool::new(false);
+        let (error, rejected) =
+            transact_replacement(&mut current, "failed replacement", ready, |_| {
+                start_called.store(true, Ordering::Release);
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("initial decode failed"));
+        assert_eq!(rejected, "failed replacement");
+        assert_eq!(current, Some("existing playback"));
+        assert!(!start_called.load(Ordering::Acquire));
+
+        let (_timeout_tx, timeout_rx) = bounded::<WorkerStatus>(1);
+        let ready = await_worker_ready(&timeout_rx, Duration::ZERO);
+        let (error, rejected) =
+            transact_replacement(&mut current, "timed out replacement", ready, |_| Ok(()))
+                .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert_eq!(rejected, "timed out replacement");
+        assert_eq!(current, Some("existing playback"));
+    }
+
+    #[test]
+    fn worker_disconnect_becomes_error_and_reported_error_is_never_overwritten() {
+        let (disconnected_tx, disconnected_rx) = bounded::<WorkerStatus>(1);
+        drop(disconnected_tx);
+        let mut receiver = Some(disconnected_rx);
+        let mut last_error = None;
+        consume_worker_terminal(&mut receiver, &mut last_error);
+        assert!(last_error
+            .as_deref()
+            .unwrap()
+            .contains("stopped unexpectedly"));
+        assert!(receiver.is_none());
+
+        let (error_tx, error_rx) = bounded(1);
+        error_tx
+            .send(WorkerStatus::Error(AppError::Audio(
+                "specific decoder failure".to_owned(),
+            )))
+            .unwrap();
+        drop(error_tx);
+        let mut receiver = Some(error_rx);
+        let mut last_error = None;
+        consume_worker_terminal(&mut receiver, &mut last_error);
+        let specific = last_error.clone();
+        consume_worker_terminal(&mut receiver, &mut last_error);
+        assert_eq!(last_error, specific);
+        assert!(last_error
+            .as_deref()
+            .unwrap()
+            .contains("specific decoder failure"));
+        assert!(receiver.is_none());
+
+        let (prior_tx, prior_rx) = bounded::<WorkerStatus>(1);
+        drop(prior_tx);
+        let mut receiver = Some(prior_rx);
+        let mut prior = Some("more specific prior failure".to_owned());
+        consume_worker_terminal(&mut receiver, &mut prior);
+        assert_eq!(prior.as_deref(), Some("more specific prior failure"));
     }
 }

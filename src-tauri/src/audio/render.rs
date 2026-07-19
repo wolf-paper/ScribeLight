@@ -11,7 +11,10 @@ pub struct QueuedFrame {
     pub source_frame: u64,
     pub left: f32,
     pub right: f32,
+    pub terminal: bool,
 }
+
+pub const NO_TERMINAL_GENERATION: u64 = u64::MAX;
 
 /// Atomics shared by the non-real-time controller and the audio callback.
 pub struct RenderState {
@@ -20,6 +23,8 @@ pub struct RenderState {
     pub playing: AtomicBool,
     pub volume_bits: AtomicU32,
     pub underruns: AtomicU64,
+    /// Generation whose terminal frame was rendered, or `NO_TERMINAL_GENERATION`.
+    pub terminal_generation: AtomicU64,
     /// Set by CPAL's error callback using a single bounded atomic store.
     pub stream_error: AtomicBool,
 }
@@ -32,6 +37,7 @@ impl RenderState {
             playing: AtomicBool::new(false),
             volume_bits: AtomicU32::new(1.0_f32.to_bits()),
             underruns: AtomicU64::new(0),
+            terminal_generation: AtomicU64::new(NO_TERMINAL_GENERATION),
             stream_error: AtomicBool::new(false),
         }
     }
@@ -102,6 +108,14 @@ impl RenderCore {
                 self.state
                     .source_frame
                     .store(frame.source_frame, Ordering::Release);
+                if frame.terminal
+                    && self.state.generation.load(Ordering::Acquire) == frame.generation
+                {
+                    self.state
+                        .terminal_generation
+                        .store(frame.generation, Ordering::Release);
+                    self.state.playing.store(false, Ordering::Release);
+                }
             } else {
                 device_frame.fill(0.0);
                 self.state.underruns.fetch_add(1, Ordering::Relaxed);
@@ -148,6 +162,7 @@ mod tests {
                 source_frame: 10,
                 left: 0.1,
                 right: 0.2,
+                terminal: false,
             })
             .unwrap();
         producer
@@ -156,6 +171,7 @@ mod tests {
                 source_frame: 20,
                 left: 0.3,
                 right: 0.4,
+                terminal: false,
             })
             .unwrap();
         let state = Arc::new(RenderState::new());
@@ -186,6 +202,7 @@ mod tests {
                     source_frame: source_frame as u64,
                     left: 0.1,
                     right: 0.2,
+                    terminal: false,
                 })
                 .unwrap();
         }
@@ -195,6 +212,7 @@ mod tests {
                 source_frame: 44,
                 left: 0.6,
                 right: 0.3,
+                terminal: false,
             })
             .unwrap();
         assert!(producer
@@ -203,6 +221,7 @@ mod tests {
                 source_frame: 45,
                 left: 0.0,
                 right: 0.0,
+                terminal: false,
             })
             .is_err());
 
@@ -229,6 +248,7 @@ mod tests {
                     source_frame: source_frame as u64,
                     left: 0.5,
                     right: 0.5,
+                    terminal: false,
                 })
                 .unwrap();
         }
@@ -238,6 +258,7 @@ mod tests {
                 source_frame: 99,
                 left: 0.5,
                 right: 0.5,
+                terminal: false,
             })
             .is_err());
         let state = Arc::new(RenderState::new());
@@ -263,6 +284,7 @@ mod tests {
                 source_frame: 8,
                 left: 0.5,
                 right: 0.25,
+                terminal: false,
             })
             .unwrap();
         let state = Arc::new(RenderState::new());
@@ -287,6 +309,7 @@ mod tests {
                 source_frame: 4,
                 left: 0.8,
                 right: 0.4,
+                terminal: false,
             })
             .unwrap();
         let state = Arc::new(RenderState::new());
@@ -311,6 +334,7 @@ mod tests {
                 source_frame: 13,
                 left: 0.8,
                 right: 0.2,
+                terminal: false,
             })
             .unwrap();
         let state = Arc::new(RenderState::new());
@@ -335,6 +359,7 @@ mod tests {
                 source_frame: 12,
                 left: 0.5,
                 right: 0.25,
+                terminal: false,
             })
             .unwrap();
         let state = Arc::new(RenderState::new());
@@ -348,6 +373,71 @@ mod tests {
 
         render.fill_f32(&mut output, 2);
         assert_eq!(output, [0.5, 0.25]);
+    }
+
+    #[test]
+    fn terminal_frame_is_rendered_once_then_pauses_without_underruns() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        producer
+            .push(QueuedFrame {
+                generation: 3,
+                source_frame: 19,
+                left: 0.75,
+                right: -0.25,
+                terminal: true,
+            })
+            .unwrap();
+        let state = Arc::new(RenderState::new());
+        state.generation.store(3, Ordering::Release);
+        state.playing.store(true, Ordering::Release);
+        let mut render = RenderCore::new(consumer, Arc::clone(&state));
+        let mut output = [9.0_f32; 6];
+
+        render.fill_f32(&mut output, 2);
+
+        assert_eq!(output, [0.75, -0.25, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(state.source_frame.load(Ordering::Acquire), 19);
+        assert_eq!(state.terminal_generation.load(Ordering::Acquire), 3);
+        assert!(!state.playing.load(Ordering::Acquire));
+        assert_eq!(state.underruns.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn stale_terminal_marker_cannot_pause_a_new_generation() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(4);
+        producer
+            .push(QueuedFrame {
+                generation: 1,
+                source_frame: 9,
+                left: 0.1,
+                right: 0.2,
+                terminal: true,
+            })
+            .unwrap();
+        producer
+            .push(QueuedFrame {
+                generation: 2,
+                source_frame: 40,
+                left: 0.6,
+                right: 0.4,
+                terminal: false,
+            })
+            .unwrap();
+        let state = Arc::new(RenderState::new());
+        state.generation.store(2, Ordering::Release);
+        state.playing.store(true, Ordering::Release);
+        let mut render = RenderCore::new(consumer, Arc::clone(&state));
+        let mut output = [0.0_f32; 2];
+
+        render.fill_f32(&mut output, 2);
+
+        assert_eq!(output, [0.6, 0.4]);
+        assert_eq!(
+            state.terminal_generation.load(Ordering::Acquire),
+            NO_TERMINAL_GENERATION
+        );
+        assert!(state.playing.load(Ordering::Acquire));
+        assert_eq!(state.underruns.load(Ordering::Acquire), 0);
     }
 
     #[test]
