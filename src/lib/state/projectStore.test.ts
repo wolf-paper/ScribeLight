@@ -113,7 +113,7 @@ describe('ProjectStore', () => {
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
     expect(get(store)).toMatchObject({
       project: { draft: { notes: 'later save' } },
-      saveError: 'Error: disk full'
+      saveError: 'disk full'
     });
   });
 
@@ -136,6 +136,80 @@ describe('ProjectStore', () => {
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 12, endMs: 34 },
       draft: { startMs: 12, endMs: 34 }
+    });
+  });
+
+  it('updates a valid dashboard boundary pair in the draft and active selection together', () => {
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    store.setSelection({ startMs: 10, endMs: 20 });
+
+    store.patchBoundaries({ startMs: 12 });
+    store.patchBoundaries({ endMs: 34 });
+
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 12, endMs: 34 },
+      draft: { startMs: 12, endMs: 34 }
+    });
+  });
+
+  it('keeps the last valid selection while dashboard fields temporarily form an invalid range', () => {
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    store.setSelection({ startMs: 0, endMs: 100 });
+
+    store.patchBoundaries({ startMs: 300 });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 0, endMs: 100 },
+      draft: { startMs: 300, endMs: 100 }
+    });
+
+    store.patchBoundaries({ endMs: 400 });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 300, endMs: 400 },
+      draft: { startMs: 300, endMs: 400 }
+    });
+  });
+
+  it('does not propagate fractional or out-of-bounds dashboard boundaries', () => {
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    store.setSelection({ startMs: 10, endMs: 20 });
+
+    store.patchBoundaries({ startMs: 10.5 });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 10, endMs: 20 },
+      draft: { startMs: 10.5, endMs: 20 }
+    });
+    store.patchBoundaries({ startMs: 10, endMs: 1_001 });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 10, endMs: 20 },
+      draft: { startMs: 10, endMs: 1_001 }
+    });
+  });
+
+  it('commits add and update boundaries as one coherent active editor state', async () => {
+    const store = new ProjectStore(bridge, () => 'event-1');
+    store.open(createProject(audio));
+    store.patchBoundaries({ startMs: 10, endMs: 20 });
+    store.patchDraft({ transcription: 'first' });
+
+    await expect(store.commitDraft('2026-01-01T00:00:00Z')).resolves.toBe(true);
+    expect(get(store).project).toMatchObject({
+      activeAnnotationId: 'event-1',
+      activeSelection: { startMs: 10, endMs: 20 },
+      draft: { startMs: 10, endMs: 20 },
+      annotations: [expect.objectContaining({ id: 'event-1', startMs: 10, endMs: 20 })]
+    });
+
+    store.patchBoundaries({ startMs: 30 });
+    store.patchBoundaries({ endMs: 40 });
+    await expect(store.commitDraft('2026-01-01T00:00:01Z')).resolves.toBe(true);
+    expect(get(store).project).toMatchObject({
+      activeAnnotationId: 'event-1',
+      activeSelection: { startMs: 30, endMs: 40 },
+      draft: { startMs: 30, endMs: 40 },
+      annotations: [expect.objectContaining({ id: 'event-1', startMs: 30, endMs: 40 })]
     });
   });
 
@@ -190,7 +264,7 @@ describe('ProjectStore', () => {
   });
 
   it('keeps local project state and exposes a save failure', async () => {
-    bridge.saveProject.mockRejectedValueOnce(new Error('disk full'));
+    bridge.saveProject.mockRejectedValueOnce({ kind: 'persistence', message: 'disk full' });
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
     store.patchDraft({ notes: 'do not lose me' });
@@ -199,12 +273,12 @@ describe('ProjectStore', () => {
 
     expect(get(store)).toMatchObject({
       project: { draft: { notes: 'do not lose me' } },
-      saveError: 'Error: disk full'
+      saveError: 'disk full'
     });
   });
 
   it('does not publish a committed mutation when its atomic save fails', async () => {
-    bridge.saveProject.mockRejectedValueOnce(new Error('disk full'));
+    bridge.saveProject.mockRejectedValueOnce({ kind: 'persistence', message: 'disk full' });
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
 
@@ -215,7 +289,7 @@ describe('ProjectStore', () => {
 
     expect(get(store)).toMatchObject({
       project: { displayFormat: 'seconds' },
-      saveError: 'Error: disk full'
+      saveError: 'disk full'
     });
   });
 
@@ -578,7 +652,7 @@ describe('ProjectStore', () => {
   });
 
   it('retains failed-save evidence if a caller opens another project', async () => {
-    bridge.saveProject.mockRejectedValueOnce(new Error('old project is not writable'));
+    bridge.saveProject.mockRejectedValueOnce({ kind: 'persistence', message: 'old project is not writable' });
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
     store.patchDraft({ notes: 'unsaved old draft' });
@@ -586,6 +660,6 @@ describe('ProjectStore', () => {
 
     store.open(createProject({ ...audio, canonicalPath: 'b.wav' }));
 
-    expect(get(store).saveError).toBe('Error: old project is not writable');
+    expect(get(store).saveError).toBe('old project is not writable');
   });
 });

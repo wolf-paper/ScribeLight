@@ -34,6 +34,14 @@
       : project.draft.acousticTagIds.filter((id) => id !== tagId);
     store.patchDraft({ acousticTagIds });
   }
+
+  function boundaryChanged(field: 'startMs' | 'endMs', input: HTMLInputElement) {
+    const rawValue = input.value.trim();
+    if (!rawValue) return;
+    const value = Number(rawValue);
+    if (!Number.isFinite(value) || !Number.isInteger(value)) return;
+    store.patchBoundaries(field === 'startMs' ? { startMs: value } : { endMs: value });
+  }
 </script>
 
 {#if $store.project}
@@ -49,8 +57,10 @@
           type="number"
           min="0"
           max={project.audioIdentity.durationMs}
+          step="1"
           value={project.draft.startMs}
-          on:input={(event) => store.patchDraft({ startMs: +(event.currentTarget as HTMLInputElement).value })}
+          aria-describedby="boundary-editing-help"
+          on:input={(event) => boundaryChanged('startMs', event.currentTarget as HTMLInputElement)}
         />
       </label>
       <label>
@@ -61,11 +71,14 @@
           type="number"
           min="1"
           max={project.audioIdentity.durationMs}
+          step="1"
           value={project.draft.endMs}
-          on:input={(event) => store.patchDraft({ endMs: +(event.currentTarget as HTMLInputElement).value })}
+          aria-describedby="boundary-editing-help"
+          on:input={(event) => boundaryChanged('endMs', event.currentTarget as HTMLInputElement)}
         />
       </label>
     </div>
+    <p id="boundary-editing-help">Edit either value freely; the loop updates when both boundaries form a valid range.</p>
 
     <label>
       Event type

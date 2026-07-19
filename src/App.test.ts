@@ -5,10 +5,15 @@ import { createProject } from './lib/domain/project';
 import type { PeakData } from './lib/bridge/native';
 import { fakeIdentity, fakePeaks, makeFakeBridge, makeFakeLifecycle, nullPickers } from './test/fakeBridge';
 
+const waveformSpies = vi.hoisted(() => ({
+  setSelection: vi.fn(),
+  setPlayhead: vi.fn(),
+  setZoom: vi.fn(),
+  destroy: vi.fn()
+}));
+
 vi.mock('./lib/waveform/wavesurferAdapter', () => ({
-  createWaveformAdapter: () => ({
-    setSelection: vi.fn(), setPlayhead: vi.fn(), setZoom: vi.fn(), destroy: vi.fn()
-  })
+  createWaveformAdapter: () => waveformSpies
 }));
 
 function deferred<T>() {
@@ -35,7 +40,10 @@ async function openClip() {
 }
 
 describe('App', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    Object.values(waveformSpies).forEach((spy) => spy.mockClear());
+  });
 
   it('identifies the product and empty state without touching a live Tauri window', () => {
     renderApp();
@@ -98,6 +106,125 @@ describe('App', () => {
       annotations: expect.arrayContaining([expect.objectContaining({ transcription: 'うん!' }), expect.objectContaining({ transcription: 'imported' })])
     })));
     await waitFor(() => expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations'));
+  });
+
+  it('holds empty and invalid boundary edits locally before realigning waveform, native loop, and export', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const bridge = makeFakeBridge({ identity });
+    renderApp({
+      bridge,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav', exportTsv: async () => 'clip.tsv' },
+      id: () => 'numeric-event'
+    });
+    await openClip();
+
+    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
+    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
+    bridge.audioSetLoop.mockClear();
+    waveformSpies.setSelection.mockClear();
+
+    const start = screen.getByLabelText('Start milliseconds');
+    const end = screen.getByLabelText('End milliseconds');
+    await fireEvent.input(start, { target: { value: '' } });
+    expect(start).toHaveValue(null);
+    await Promise.resolve();
+    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
+    expect(waveformSpies.setSelection).not.toHaveBeenCalledWith({ startMs: 0, endMs: 1_000 });
+
+    await fireEvent.input(start, { target: { value: '3000' } });
+    await Promise.resolve();
+    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
+    expect(waveformSpies.setSelection).not.toHaveBeenCalledWith({ startMs: 3_000, endMs: 1_000 });
+
+    await fireEvent.input(end, { target: { value: '' } });
+    expect(end).toHaveValue(null);
+    await Promise.resolve();
+    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
+    expect(waveformSpies.setSelection).not.toHaveBeenCalledWith({ startMs: 3_000, endMs: 0 });
+    expect(waveformSpies.setSelection.mock.calls.every(([selection]) => (
+      selection.startMs === 100 && selection.endMs === 1_000
+    ))).toBe(true);
+
+    await fireEvent.input(end, { target: { value: '4000' } });
+    await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 3_000, endMs: 4_000 }));
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 3_000, endMs: 4_000 }));
+    await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'numeric range' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add annotation' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
+    await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
+      activeAnnotationId: 'numeric-event',
+      activeSelection: { startMs: 3_000, endMs: 4_000 },
+      draft: expect.objectContaining({ startMs: 3_000, endMs: 4_000 }),
+      annotations: [expect.objectContaining({ id: 'numeric-event', startMs: 3_000, endMs: 4_000 })]
+    })));
+  });
+
+  it('normalizes a stale recovered selection to the newer valid editor boundaries on reopen', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    const annotation = {
+      ...restored.draft,
+      id: 'recovered-event',
+      startMs: 100,
+      endMs: 200,
+      transcription: 'committed text',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    };
+    restored.annotations = [annotation];
+    restored.activeAnnotationId = annotation.id;
+    restored.activeSelection = { startMs: 9_000, endMs: 12_000 };
+    restored.draft = { ...annotation, startMs: 300, endMs: 400 };
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await openClip();
+
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(400);
+    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
+    await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 300, endMs: 400 }));
+  });
+
+  it('reopens a safe in-progress recovered draft before its transcription is complete', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored.activeSelection = { startMs: 100, endMs: 200 };
+    restored.draft = { ...restored.draft, startMs: 300, endMs: 400, transcription: '' };
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await openClip();
+
+    expect(screen.queryByRole('alert', { name: 'Application error' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(400);
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 300, endMs: 400 }));
+  });
+
+  it.each([
+    ['not finite', Number.NaN, 400],
+    ['fractional', 300.5, 400],
+    ['past duration', 300, 10_001],
+    ['non-increasing', 400, 300]
+  ])('rejects %s recovered draft boundaries', async (_case, startMs, endMs) => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored.activeSelection = { startMs: 100, endMs: 200 };
+    restored.draft = { ...restored.draft, startMs, endMs };
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/recovered draft does not fit/i);
+    expect(bridge.analyzeAudio).not.toHaveBeenCalled();
+    expect(bridge.audioOpen).not.toHaveBeenCalled();
   });
 
   it('waits for an immediate multiline policy save before exporting the authoritative project', async () => {

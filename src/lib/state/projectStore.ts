@@ -2,6 +2,7 @@ import { get, writable, type Readable } from 'svelte/store';
 import { emptyDraft } from '../domain/project';
 import type { Annotation, AnnotationDraft, Project, Selection } from '../domain/types';
 import { validateDraft, type FieldErrors } from '../domain/validation';
+import { formatUnknownError } from '../errors';
 
 interface SaveBridge {
   saveProject(project: Project): Promise<void>;
@@ -31,6 +32,13 @@ function draftFromAnnotation(annotation: Annotation): AnnotationDraft {
     acousticTagIds: [...annotation.acousticTagIds],
     notes: annotation.notes
   };
+}
+
+function validDraftSelection(draft: AnnotationDraft, durationMs: number): Selection | null {
+  return Number.isInteger(draft.startMs) && Number.isInteger(draft.endMs)
+    && draft.startMs >= 0 && draft.endMs > draft.startMs && draft.endMs <= durationMs
+    ? { startMs: draft.startMs, endMs: draft.endMs }
+    : null;
 }
 
 export interface ProjectState {
@@ -77,6 +85,26 @@ export class ProjectStore implements Readable<ProjectState> {
     if (this.mutationsBlocked) return;
     this.markDraftFields(Object.keys(patch) as (keyof AnnotationDraft)[]);
     this.updateProject((project) => ({ ...project, draft: { ...project.draft, ...patch } }));
+    this.scheduleRecovery();
+  }
+
+  patchBoundaries(patch: Partial<Pick<AnnotationDraft, 'startMs' | 'endMs'>>): void {
+    if (this.mutationsBlocked) return;
+    const current = get(this.state).project;
+    if (!current) return;
+    const fields = Object.keys(patch) as ('startMs' | 'endMs')[];
+    this.markDraftFields(fields);
+    const draft = { ...current.draft, ...patch };
+    const validSelection = validDraftSelection(draft, current.audioIdentity.durationMs);
+    if (validSelection && (
+      current.activeSelection?.startMs !== validSelection.startMs
+      || current.activeSelection.endMs !== validSelection.endMs
+    )) this.selectionRevision += 1;
+    this.updateProject((project) => ({
+      ...project,
+      draft,
+      activeSelection: validSelection ?? project.activeSelection
+    }));
     this.scheduleRecovery();
   }
 
@@ -177,7 +205,13 @@ export class ProjectStore implements Readable<ProjectState> {
       const annotations = active
         ? project.annotations.map((item) => item.id === active.id ? annotation : item)
         : [...project.annotations, annotation];
-      return { ...project, annotations, activeAnnotationId: annotation.id };
+      return {
+        ...project,
+        annotations,
+        activeAnnotationId: annotation.id,
+        activeSelection: { startMs: annotation.startMs, endMs: annotation.endMs },
+        draft: { ...project.draft, startMs: annotation.startMs, endMs: annotation.endMs }
+      };
     });
   }
 
@@ -274,7 +308,7 @@ export class ProjectStore implements Readable<ProjectState> {
     } catch (error) {
       this.state.update((value) => ({
         ...value,
-        saveError: error instanceof Error ? error.message : String(error)
+        saveError: formatUnknownError(error)
       }));
       return false;
     }
@@ -380,6 +414,6 @@ export class ProjectStore implements Readable<ProjectState> {
   }
 
   private setSaveError(error: unknown): void {
-    this.state.update((value) => ({ ...value, saveError: String(error) }));
+    this.state.update((value) => ({ ...value, saveError: formatUnknownError(error) }));
   }
 }

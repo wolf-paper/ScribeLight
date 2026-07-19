@@ -37,7 +37,45 @@ describe('AnnotationDashboard', () => {
     const store = setup('clock');
     expect(screen.getByLabelText('Loop start time')).toHaveTextContent('00:00.010');
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '30' } });
-    expect(get(store).project!.draft.endMs).toBe(30);
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 10, endMs: 30 },
+      draft: { startMs: 10, endMs: 30 }
+    });
+  });
+
+  it('allows start-first editing without moving the loop until the pair is valid', async () => {
+    const store = setup();
+    store.setSelection({ startMs: 10, endMs: 20 });
+
+    const start = screen.getByLabelText('Start milliseconds');
+    const end = screen.getByLabelText('End milliseconds');
+
+    await fireEvent.input(start, { target: { value: '' } });
+    expect(start).toHaveValue(null);
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 10, endMs: 20 },
+      draft: { startMs: 10, endMs: 20 }
+    });
+
+    await fireEvent.input(start, { target: { value: '30' } });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 10, endMs: 20 },
+      draft: { startMs: 30, endMs: 20 }
+    });
+    expect(screen.getByText(/loop updates when both boundaries form a valid range/i)).toBeInTheDocument();
+
+    await fireEvent.input(end, { target: { value: '' } });
+    expect(end).toHaveValue(null);
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 10, endMs: 20 },
+      draft: { startMs: 30, endMs: 20 }
+    });
+
+    await fireEvent.input(end, { target: { value: '40' } });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 30, endMs: 40 },
+      draft: { startMs: 30, endMs: 40 }
+    });
   });
 
   it('normalizes non-speech fields and disables speaker selection', async () => {

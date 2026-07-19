@@ -21,6 +21,7 @@
   import { createProject } from './lib/domain/project';
   import type { AnnotationDraft, AudioIdentity, MultilinePolicy, Project, Selection } from './lib/domain/types';
   import { validateDraft } from './lib/domain/validation';
+  import { formatUnknownError } from './lib/errors';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
 
@@ -141,12 +142,6 @@
     return path.split(/[\\/]/).at(-1) ?? path;
   }
 
-  function errorText(error: unknown): string {
-    if (typeof error === 'string') return error;
-    if (error && typeof error === 'object' && 'message' in error) return String(error.message);
-    return 'The operation failed';
-  }
-
   function sameAudioIdentity(left: AudioIdentity, right: AudioIdentity): boolean {
     return left.canonicalPath === right.canonicalPath
       && left.size === right.size
@@ -211,7 +206,7 @@
       await audioSession.refresh();
     } catch (rollbackError) {
       const combined =
-        `${primaryFailure}. Restoring the previous audio failed: ${errorText(rollbackError)}. Reopen the previous clip before continuing.`
+        `${primaryFailure}. Restoring the previous audio failed: ${formatUnknownError(rollbackError)}. Reopen the previous clip before continuing.`
       nativePreservationFailures += 1;
       persistentError = combined;
       throw new NativePreservationError(combined);
@@ -237,7 +232,7 @@
       try {
         openedIdentity = await bridge.audioOpen(path);
       } catch (error) {
-        const primaryFailure = `Opening ${basename(path)} failed: ${errorText(error)}`;
+        const primaryFailure = `Opening ${basename(path)} failed: ${formatUnknownError(error)}`;
         await restoreNativePlayback(priorIdentity, priorSnapshot, primaryFailure);
         if (!isCurrent(generation)) return null;
         throw error;
@@ -258,7 +253,7 @@
       try {
         await audioSession.refresh();
       } catch (error) {
-        const primaryFailure = `Opening ${basename(path)} could not establish playback: ${errorText(error)}`;
+        const primaryFailure = `Opening ${basename(path)} could not establish playback: ${formatUnknownError(error)}`;
         await restoreNativePlayback(priorIdentity, priorSnapshot, primaryFailure);
         if (!isCurrent(generation)) return null;
         throw error;
@@ -304,11 +299,11 @@
     void Promise.resolve().then(() => bridge.onAnalysisProgress((progress) => {
       if (activeAnalysisGeneration !== null && isCurrent(activeAnalysisGeneration)) analysisProgress = progress;
     })).then((unlisten) => installDisposer('analysis', unlisten)).catch((error) => {
-      if (!cleanupRequested) persistentError = errorText(error);
+      if (!cleanupRequested) persistentError = formatUnknownError(error);
     });
     void Promise.resolve().then(() => lifecycle.onCloseRequested(requestClose))
       .then((unlisten) => installDisposer('close', unlisten))
-      .catch((error) => { if (!cleanupRequested) persistentError = errorText(error); });
+      .catch((error) => { if (!cleanupRequested) persistentError = formatUnknownError(error); });
     return () => {
       operationGeneration += 1;
       disposeListeners();
@@ -319,15 +314,12 @@
     };
   });
 
-  function validateRecoveredProject(value: Project, changed: boolean): void {
-    const invalidDuration = (selection: Selection | null): boolean => Boolean(selection && (
-      !Number.isInteger(selection.startMs) || !Number.isInteger(selection.endMs)
-      || selection.startMs < 0 || selection.endMs <= selection.startMs
-      || selection.endMs > value.audioIdentity.durationMs
-    ));
-    if (invalidDuration(value.activeSelection)) {
-      throw new Error('The recovered selection does not fit the changed audio duration');
-    }
+  function normalizeRecoveredProject(value: Project, changed: boolean): Project {
+    if (value.schemaVersion !== 1) throw new Error('The recovered project schema is not supported');
+    const hasInvalidReferences = (draft: AnnotationDraft): boolean => (
+      (draft.speakerId !== null && !value.speakers.some((speaker) => speaker.id === draft.speakerId))
+      || draft.acousticTagIds.some((id) => !value.acousticTags.some((tag) => tag.id === id))
+    );
     for (const annotation of value.annotations) {
       const draft: AnnotationDraft = {
         startMs: annotation.startMs, endMs: annotation.endMs, eventType: annotation.eventType,
@@ -335,18 +327,31 @@
         speakerId: annotation.speakerId, overlap: annotation.overlap, confidence: annotation.confidence,
         acousticTagIds: annotation.acousticTagIds, notes: annotation.notes
       };
-      if (Object.keys(validateDraft(draft, value)).length) {
+      if (hasInvalidReferences(draft) || Object.keys(validateDraft(draft, value)).length) {
         throw new Error(`Recovered annotation ${annotation.id} does not fit the ${changed ? 'changed audio duration' : 'audio project'}`);
       }
-    }
-    const draftStarted = value.draft.endMs !== 0 || value.draft.startMs !== 0
-      || value.draft.transcription !== '' || value.draft.notes !== '' || value.activeSelection !== null;
-    if (draftStarted && Object.keys(validateDraft(value.draft, value)).length) {
-      throw new Error(`The recovered draft does not fit the ${changed ? 'changed audio duration' : 'audio project'}`);
     }
     if (value.activeAnnotationId && !value.annotations.some((item) => item.id === value.activeAnnotationId)) {
       throw new Error('The recovered active annotation no longer exists');
     }
+    if (hasInvalidReferences(value.draft)) {
+      throw new Error(`The recovered draft does not fit the ${changed ? 'changed audio duration' : 'audio project'}`);
+    }
+    const draftStarted = value.draft.endMs !== 0 || value.draft.startMs !== 0
+      || value.draft.transcription !== '' || value.draft.notes !== '' || value.activeSelection !== null;
+    if (!draftStarted) return value;
+    const draftErrors = validateDraft(value.draft, value);
+    if (draftErrors.transcription === 'Transcription is required for intelligible speech'
+      && !value.draft.transcription.includes('\t')) {
+      delete draftErrors.transcription;
+    }
+    if (Object.keys(draftErrors).length) {
+      throw new Error(`The recovered draft does not fit the ${changed ? 'changed audio duration' : 'audio project'}`);
+    }
+    return {
+      ...value,
+      activeSelection: { startMs: value.draft.startMs, endMs: value.draft.endMs }
+    };
   }
 
   async function openAudio(): Promise<void> {
@@ -356,7 +361,7 @@
     try {
       path = await pickers.audio();
     } catch (error) {
-      if (request >= latestStartedPicker) persistentError = errorText(error);
+      if (request >= latestStartedPicker) persistentError = formatUnknownError(error);
       return;
     }
     if (!path) return;
@@ -388,8 +393,10 @@
       ));
       if (changed && !await confirmRecovery('The source audio changed. Reuse its existing annotations and regenerate the waveform?')) return;
       if (!isCurrent(generation)) return;
-      const nextProject = restored ? { ...restored, audioIdentity: identity } : createProject(identity);
-      validateRecoveredProject(nextProject, changed);
+      const nextProject = normalizeRecoveredProject(
+        restored ? { ...restored, audioIdentity: identity } : createProject(identity),
+        changed
+      );
       analysisProgress = { processedMs: 0, durationMs: identity.durationMs };
       const nextPeaks = await bridge.analyzeAudio(path);
       if (!isCurrent(generation)) return;
@@ -401,10 +408,9 @@
       }
       if (!isCurrent(generation)) return;
       const priorProject = get(projectStore).project;
-      const projectToPublish = priorProject?.audioIdentity.canonicalPath === identity.canonicalPath
+      const projectToPublish = normalizeRecoveredProject(priorProject?.audioIdentity.canonicalPath === identity.canonicalPath
         ? { ...priorProject, audioIdentity: identity }
-        : nextProject;
-      validateRecoveredProject(projectToPublish, changed);
+        : nextProject, changed);
       const openedIdentity = await queueNativeOpen(
         path,
         identity,
@@ -420,7 +426,7 @@
       audioSession.startPolling();
       status = `Opened ${basename(path)}`;
     } catch (error) {
-      if (error instanceof NativePreservationError || isCurrent(generation)) persistentError = errorText(error);
+      if (error instanceof NativePreservationError || isCurrent(generation)) persistentError = formatUnknownError(error);
     } finally {
       if (activeAnalysisGeneration === generation) activeAnalysisGeneration = null;
       if (isCurrent(generation)) analysisProgress = null;
@@ -437,7 +443,7 @@
       await bridge.cancelAnalysis();
       status = 'Waveform analysis cancelled';
     } catch (error) {
-      persistentError = errorText(error);
+      persistentError = formatUnknownError(error);
     }
   }
 
@@ -461,7 +467,7 @@
       }
       status = `Imported ${imported.annotations.length} annotation${imported.annotations.length === 1 ? '' : 's'}`;
     } catch (error) {
-      persistentError = errorText(error);
+      persistentError = formatUnknownError(error);
     }
   }
 
@@ -482,7 +488,7 @@
       await bridge.writeTsv(path, current);
       status = `Exported ${current.annotations.length} annotation${current.annotations.length === 1 ? '' : 's'}`;
     } catch (error) {
-      persistentError = errorText(error);
+      persistentError = formatUnknownError(error);
     }
   }
 
@@ -529,7 +535,7 @@
   }
 
   function reportPromise(request: Promise<unknown>): Promise<void> {
-    return request.then(() => undefined).catch((error) => { persistentError = errorText(error); });
+    return request.then(() => undefined).catch((error) => { persistentError = formatUnknownError(error); });
   }
 
   function togglePlay(): void {
@@ -612,12 +618,12 @@
     activeAnalysisGeneration = null;
     analysisProgress = null;
     if (hadAnalysis) {
-      try { await bridge.cancelAnalysis(); } catch (error) { persistentError = errorText(error); }
+      try { await bridge.cancelAnalysis(); } catch (error) { persistentError = formatUnknownError(error); }
     }
     try {
       let flushed = false;
       const preservationFailuresBeforeDrain = nativePreservationFailures;
-      try { flushed = await projectStore.flush(); } catch (error) { persistentError = errorText(error); }
+      try { flushed = await projectStore.flush(); } catch (error) { persistentError = formatUnknownError(error); }
       await audioOpenQueue;
       if (!flushed) {
         if (nativePreservationFailures === preservationFailuresBeforeDrain) {
@@ -625,9 +631,9 @@
         }
         return false;
       }
-      try { await audioSession.close(); } catch (error) { persistentError = errorText(error); }
+      try { await audioSession.close(); } catch (error) { persistentError = formatUnknownError(error); }
       disposeListeners();
-      try { await lifecycle.destroy(); } catch (error) { persistentError = errorText(error); }
+      try { await lifecycle.destroy(); } catch (error) { persistentError = formatUnknownError(error); }
       completed = true;
       return true;
     } finally {

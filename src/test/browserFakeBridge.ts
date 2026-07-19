@@ -57,6 +57,10 @@ interface BrowserExportRecord {
   project: Project;
 }
 
+type NativeCall =
+  | { command: 'set_loop'; selection: { startMs: number; endMs: number } }
+  | { command: 'clear_loop' };
+
 const emptySnapshot = (): PlaybackSnapshot => ({
   state: 'empty',
   positionMs: 0,
@@ -105,6 +109,7 @@ export function browserTestProps() {
   const browserGlobal = globalThis as typeof globalThis & {
     __LIGHTSCRIBE_LAST_EXPORT__: BrowserExportRecord | null;
   };
+  const nativeCalls: NativeCall[] = [];
   browserGlobal.__LIGHTSCRIBE_LAST_EXPORT__ = null;
   const persist = () => sessionStorage.setItem(key, JSON.stringify(state));
   const updateSnapshot = (patch: Partial<PlaybackSnapshot>) => {
@@ -139,8 +144,14 @@ export function browserTestProps() {
     audioPlay: async () => updateSnapshot({ state: 'playing' }),
     audioPause: async () => updateSnapshot({ state: 'paused' }),
     audioSeek: async (positionMs) => updateSnapshot({ positionMs }),
-    audioSetLoop: async (loopRange) => updateSnapshot({ loopRange: { ...loopRange } }),
-    audioClearLoop: async () => updateSnapshot({ loopRange: null }),
+    audioSetLoop: async (loopRange) => {
+      nativeCalls.push({ command: 'set_loop', selection: { ...loopRange } });
+      updateSnapshot({ loopRange: { ...loopRange } });
+    },
+    audioClearLoop: async () => {
+      nativeCalls.push({ command: 'clear_loop' });
+      updateSnapshot({ loopRange: null });
+    },
     audioSetVolume: async (volume) => updateSnapshot({ volume }),
     audioSnapshot: async () => structuredClone(state.snapshot),
     audioClose: async () => updateSnapshot({ ...emptySnapshot(), volume: state.snapshot.volume })
@@ -149,7 +160,8 @@ export function browserTestProps() {
   const testApi = {
     marker,
     get savedProject() { return state.saved ? structuredClone(state.saved) : null; },
-    get snapshot() { return structuredClone(state.snapshot); }
+    get snapshot() { return structuredClone(state.snapshot); },
+    get nativeCalls() { return structuredClone(nativeCalls); }
   };
   (globalThis as typeof globalThis & { __LIGHTSCRIBE_TEST__: typeof testApi }).__LIGHTSCRIBE_TEST__ = testApi;
 

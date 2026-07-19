@@ -1,6 +1,7 @@
 import { writable, type Readable } from 'svelte/store';
 import type { NativeBridge, PlaybackSnapshot } from '../bridge/native';
 import type { Selection } from '../domain/types';
+import { formatUnknownError } from '../errors';
 
 type AudioBridge = Pick<NativeBridge,
   'audioPlay' | 'audioPause' | 'audioSeek' | 'audioSetLoop' | 'audioClearLoop' |
@@ -9,10 +10,6 @@ type AudioBridge = Pick<NativeBridge,
 const emptySnapshot = (): PlaybackSnapshot => ({
   state: 'empty', positionMs: 0, durationMs: 0, loopRange: null, volume: 1, underruns: 0
 });
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 function validSelection(value: Selection | null, durationMs: number): boolean {
   return value === null || (
@@ -172,7 +169,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
 
   private setError(error: unknown): void {
     if (this.closed) return;
-    this.state.update((value) => ({ ...value, state: { error: errorText(error) } }));
+    this.state.update((value) => ({ ...value, state: { error: formatUnknownError(error) } }));
   }
 
   private assertOpen(): void {

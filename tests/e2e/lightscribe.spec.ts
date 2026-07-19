@@ -73,6 +73,13 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(page.getByRole('button', { name: 'Move loop selection' })).toBeVisible();
   await page.getByRole('button', { name: 'Loop off' }).click();
   await expect(page.getByRole('button', { name: 'Loop on' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
+    }
+  ).__LIGHTSCRIBE_TEST__.nativeCalls)).toContainEqual({
+    command: 'set_loop', selection: { startMs: 0, endMs: 1_000 }
+  });
 
   await page.getByRole('button', { name: 'Import TSV' }).click();
   const annotations = page.getByLabel('Saved annotations');
@@ -81,7 +88,40 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(annotations.locator('.annotation-row')).toHaveCount(2);
 
   await page.getByLabel('Start milliseconds').fill('3000');
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+    }
+  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
   await page.getByLabel('End milliseconds').fill('4000');
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: {
+        snapshot: { loopRange: { startMs: number; endMs: number } | null };
+        nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }>;
+      };
+    }
+  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 3_000, endMs: 4_000 });
+  const recordedLoops = await page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
+    }
+  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop'));
+  expect(recordedLoops.at(-1)).toEqual({
+    command: 'set_loop', selection: { startMs: 3_000, endMs: 4_000 }
+  });
+  expect(recordedLoops).not.toContainEqual({
+    command: 'set_loop', selection: { startMs: 3_000, endMs: 1_000 }
+  });
+  const highlightedRange = await page.getByRole('button', { name: 'Move loop selection' }).evaluate((button) => {
+    const selection = button.parentElement;
+    const track = selection?.parentElement;
+    if (!selection || !track || track.clientWidth <= 0) throw new Error('selection highlight has no geometry');
+    const startMs = Math.round(selection.offsetLeft / track.clientWidth * 10_000);
+    const endMs = Math.round((selection.offsetLeft + selection.clientWidth) / track.clientWidth * 10_000);
+    return { startMs, endMs };
+  });
+  expect(highlightedRange).toEqual({ startMs: 3_000, endMs: 4_000 });
   const transcription = page.getByLabel('Transcription');
   await transcription.fill('もう一度');
   await transcription.press('Enter');
@@ -117,6 +157,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
 
   const project = exported.project;
   expect(project.annotations).toHaveLength(3);
+  expect(project.activeSelection).toEqual({ startMs: 3_000, endMs: 4_000 });
   expect(project.speakers.map(({ label }) => label)).toContain('narrator');
   expect(project.acousticTags.map(({ label }) => label)).toContain('whisper');
   const portableAnnotations = project.annotations

@@ -137,6 +137,17 @@ describe('AudioSession', () => {
     expect(get(session).state).toEqual({ error: expect.stringContaining('invalid playback snapshot') });
   });
 
+  it('surfaces production-shaped polling errors using their native message', async () => {
+    bridge.audioSnapshot.mockRejectedValueOnce({ kind: 'audio', message: 'device polling failed' });
+    const session = new AudioSession(bridge);
+
+    session.startPolling();
+    await vi.advanceTimersByTimeAsync(33);
+
+    expect(get(session).state).toEqual({ error: 'device polling failed' });
+    await session.close();
+  });
+
   it('is terminal after close and rejects every later operation without polling or native calls', async () => {
     const session = new AudioSession(bridge);
     await session.close();
