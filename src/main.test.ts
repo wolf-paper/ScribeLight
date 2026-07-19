@@ -7,6 +7,13 @@ vi.mock('svelte', async (importOriginal) => {
   return { ...actual, mount: vi.fn(actual.mount) };
 });
 
+vi.mock('./lib/bridge/lifecycle', () => ({
+  tauriLifecycle: {
+    onCloseRequested: vi.fn(async () => vi.fn()),
+    destroy: vi.fn(async () => undefined)
+  }
+}));
+
 import { mount } from 'svelte';
 
 describe('main entry point', () => {

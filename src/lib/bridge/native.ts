@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import type { AudioIdentity, MultilinePolicy, Project, Selection } from '../domain/types';
 
 export interface PeakData {
@@ -83,3 +84,27 @@ export const tauriBridge: NativeBridge = {
   audioSnapshot: () => invoke('audio_snapshot'),
   audioClose: () => invoke('audio_close')
 };
+
+export async function pickAudioPath(): Promise<string | null> {
+  const value = await open({
+    multiple: false,
+    filters: [{ name: 'Audio', extensions: ['mp3', 'wav'] }]
+  });
+  return typeof value === 'string' ? value : null;
+}
+
+export async function pickTsvPath(): Promise<string | null> {
+  const value = await open({
+    multiple: false,
+    filters: [{ name: 'TSV worksheet', extensions: ['tsv'] }]
+  });
+  return typeof value === 'string' ? value : null;
+}
+
+export async function chooseTsvExportPath(defaultPath?: string): Promise<string | null> {
+  const value = await save({
+    defaultPath,
+    filters: [{ name: 'TSV worksheet', extensions: ['tsv'] }]
+  });
+  return typeof value === 'string' ? value : null;
+}
