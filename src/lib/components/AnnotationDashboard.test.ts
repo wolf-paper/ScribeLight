@@ -15,6 +15,15 @@ function setup(displayFormat: 'seconds' | 'clock' = 'seconds') {
   return store;
 }
 
+async function replaceSequentially(input: HTMLElement, value: string): Promise<void> {
+  await fireEvent.input(input, { target: { value: '' } });
+  let entered = '';
+  for (const digit of value) {
+    entered += digit;
+    await fireEvent.input(input, { target: { value: entered } });
+  }
+}
+
 describe('AnnotationDashboard', () => {
   it('submits with Enter but not Shift+Enter', async () => {
     const store = setup();
@@ -37,45 +46,69 @@ describe('AnnotationDashboard', () => {
     const store = setup('clock');
     expect(screen.getByLabelText('Loop start time')).toHaveTextContent('00:00.010');
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '30' } });
+    await fireEvent.change(screen.getByLabelText('End milliseconds'));
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 10, endMs: 30 },
       draft: { startMs: 10, endMs: 30 }
     });
   });
 
-  it('allows start-first editing without moving the loop until the pair is valid', async () => {
+  it('keeps sequential boundary input local and publishes one valid pair on completion', async () => {
     const store = setup();
     store.setSelection({ startMs: 10, endMs: 20 });
 
     const start = screen.getByLabelText('Start milliseconds');
     const end = screen.getByLabelText('End milliseconds');
 
-    await fireEvent.input(start, { target: { value: '' } });
-    expect(start).toHaveValue(null);
+    await replaceSequentially(start, '30');
+    expect(start).toHaveValue(30);
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 10, endMs: 20 },
       draft: { startMs: 10, endMs: 20 }
     });
-
-    await fireEvent.input(start, { target: { value: '30' } });
+    await fireEvent.change(start);
+    expect(start).toHaveValue(30);
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 10, endMs: 20 },
-      draft: { startMs: 30, endMs: 20 }
+      draft: { startMs: 10, endMs: 20 }
     });
-    expect(screen.getByText(/loop updates when both boundaries form a valid range/i)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
 
-    await fireEvent.input(end, { target: { value: '' } });
-    expect(end).toHaveValue(null);
+    await replaceSequentially(end, '40');
+    expect(end).toHaveValue(40);
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 10, endMs: 20 },
-      draft: { startMs: 30, endMs: 20 }
+      draft: { startMs: 10, endMs: 20 }
     });
-
-    await fireEvent.input(end, { target: { value: '40' } });
+    await fireEvent.change(end);
     expect(get(store).project).toMatchObject({
       activeSelection: { startMs: 30, endMs: 40 },
       draft: { startMs: 30, endMs: 40 }
     });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/loop updates when both boundaries form a valid range/i)).toBeInTheDocument();
+  });
+
+  it('retains raw boundary edits across unrelated project updates but resets for a new selection', async () => {
+    const store = setup();
+    store.setSelection({ startMs: 10, endMs: 20 });
+    const start = screen.getByLabelText('Start milliseconds');
+
+    await replaceSequentially(start, '30');
+    store.patchDraft({ notes: 'unrelated edit' });
+    await Promise.resolve();
+    expect(start).toHaveValue(30);
+
+    store.setSelection({ startMs: 50, endMs: 60 });
+    await Promise.resolve();
+    expect(start).toHaveValue(50);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(60);
+
+    await replaceSequentially(start, '70');
+    store.setSelection(null);
+    await Promise.resolve();
+    expect(start).toHaveValue(50);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(60);
   });
 
   it('normalizes non-speech fields and disables speaker selection', async () => {
@@ -100,7 +133,7 @@ describe('AnnotationDashboard', () => {
     expect(await screen.findByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '10' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Update annotation' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Correct the highlighted annotation fields.');
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
     await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(get(store).project!.activeAnnotationId).toBeNull();
   });

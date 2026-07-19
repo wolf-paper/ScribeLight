@@ -87,13 +87,36 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(annotations).toContainText('はい');
   await expect(annotations.locator('.annotation-row')).toHaveCount(2);
 
-  await page.getByLabel('Start milliseconds').fill('3000');
+  const startBoundary = page.getByLabel('Start milliseconds');
+  const endBoundary = page.getByLabel('End milliseconds');
+  const loopCallsBeforeEdit = await page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string }> };
+    }
+  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length);
+  await startBoundary.fill('');
+  await startBoundary.pressSequentially('3000');
+  await expect(startBoundary).toHaveValue('3000');
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string }> };
+    }
+  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
+  await startBoundary.press('Tab');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
       __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
   ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
-  await page.getByLabel('End milliseconds').fill('4000');
+  await endBoundary.fill('');
+  await endBoundary.pressSequentially('4000');
+  await expect(endBoundary).toHaveValue('4000');
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string }> };
+    }
+  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
+  await endBoundary.press('Tab');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
       __LIGHTSCRIBE_TEST__: {

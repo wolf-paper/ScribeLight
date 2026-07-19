@@ -316,6 +316,36 @@
 
   function normalizeRecoveredProject(value: Project, changed: boolean): Project {
     if (value.schemaVersion !== 1) throw new Error('The recovered project schema is not supported');
+    const usedIds = new Set<string>();
+    for (const identified of [...value.speakers, ...value.acousticTags, ...value.annotations]) {
+      if (typeof identified.id !== 'string' || !identified.id.trim() || usedIds.has(identified.id)) {
+        throw new Error('Recovered speakers, acoustic tags, and annotations require a unique nonempty project ID');
+      }
+      usedIds.add(identified.id);
+    }
+    const normalizeLabels = (
+      definitions: Project['speakers'],
+      kind: 'speaker' | 'acoustic tag'
+    ): Project['speakers'] => {
+      const labels = new Set<string>();
+      return definitions.map((definition) => {
+        if (typeof definition.label !== 'string') {
+          throw new Error(`Recovered ${kind} labels are invalid`);
+        }
+        const label = definition.label.trim();
+        if (!label || label === 'none' || label.includes('\t')
+          || (kind === 'acoustic tag' && label.includes(';')) || labels.has(label)) {
+          throw new Error(`Recovered ${kind} labels are invalid`);
+        }
+        labels.add(label);
+        return label === definition.label ? definition : { ...definition, label };
+      });
+    };
+    value = {
+      ...value,
+      speakers: normalizeLabels(value.speakers, 'speaker'),
+      acousticTags: normalizeLabels(value.acousticTags, 'acoustic tag')
+    };
     const hasInvalidReferences = (draft: AnnotationDraft): boolean => (
       (draft.speakerId !== null && !value.speakers.some((speaker) => speaker.id === draft.speakerId))
       || draft.acousticTagIds.some((id) => !value.acousticTags.some((tag) => tag.id === id))
@@ -331,7 +361,8 @@
         throw new Error(`Recovered annotation ${annotation.id} does not fit the ${changed ? 'changed audio duration' : 'audio project'}`);
       }
     }
-    if (value.activeAnnotationId && !value.annotations.some((item) => item.id === value.activeAnnotationId)) {
+    if (value.activeAnnotationId !== null
+      && !value.annotations.some((item) => item.id === value.activeAnnotationId)) {
       throw new Error('The recovered active annotation no longer exists');
     }
     if (hasInvalidReferences(value.draft)) {

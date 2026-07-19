@@ -9,7 +9,59 @@
   export let store: ProjectStore;
   export let disabled = false;
 
-  const submit = () => { if (!disabled) void store.commitDraft(); };
+  let startBoundaryInput = '';
+  let endBoundaryInput = '';
+  let boundaryContextKey: string | null = null;
+  let boundaryError: string | null = null;
+
+  $: {
+    const project = $store.project;
+    const nextContextKey = project ? JSON.stringify([
+      project.audioIdentity.canonicalPath,
+      project.audioIdentity.size,
+      project.audioIdentity.modifiedMs,
+      project.audioIdentity.durationMs,
+      project.activeAnnotationId,
+      project.activeSelection?.startMs ?? null,
+      project.activeSelection?.endMs ?? null,
+      project.draft.startMs,
+      project.draft.endMs
+    ]) : null;
+    if (nextContextKey !== boundaryContextKey) {
+      boundaryContextKey = nextContextKey;
+      startBoundaryInput = project ? String(project.draft.startMs) : '';
+      endBoundaryInput = project ? String(project.draft.endMs) : '';
+      boundaryError = null;
+    }
+  }
+
+  function parseBoundary(rawValue: string): number | null {
+    if (!rawValue.trim()) return null;
+    const value = Number(rawValue);
+    return Number.isFinite(value) && Number.isInteger(value) ? value : null;
+  }
+
+  function completeBoundaryEdit(): boolean {
+    if (disabled) return false;
+    const project = $store.project;
+    if (!project) return false;
+    const startMs = parseBoundary(startBoundaryInput);
+    const endMs = parseBoundary(endBoundaryInput);
+    if (startMs === null || endMs === null || startMs < 0 || endMs <= startMs
+      || endMs > project.audioIdentity.durationMs) {
+      boundaryError = 'Enter a valid whole-millisecond range within the clip, with start before end.';
+      return false;
+    }
+    boundaryError = null;
+    if (startMs !== project.draft.startMs || endMs !== project.draft.endMs) {
+      store.patchBoundaries({ startMs, endMs });
+    }
+    return true;
+  }
+
+  const submit = () => {
+    if (!disabled && completeBoundaryEdit()) void store.commitDraft();
+  };
 
   function onEditorKeydown(event: KeyboardEvent) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
@@ -35,12 +87,10 @@
     store.patchDraft({ acousticTagIds });
   }
 
-  function boundaryChanged(field: 'startMs' | 'endMs', input: HTMLInputElement) {
-    const rawValue = input.value.trim();
-    if (!rawValue) return;
-    const value = Number(rawValue);
-    if (!Number.isFinite(value) || !Number.isInteger(value)) return;
-    store.patchBoundaries(field === 'startMs' ? { startMs: value } : { endMs: value });
+  function boundaryKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    completeBoundaryEdit();
   }
 </script>
 
@@ -58,9 +108,12 @@
           min="0"
           max={project.audioIdentity.durationMs}
           step="1"
-          value={project.draft.startMs}
-          aria-describedby="boundary-editing-help"
-          on:input={(event) => boundaryChanged('startMs', event.currentTarget as HTMLInputElement)}
+          value={startBoundaryInput}
+          aria-invalid={boundaryError ? 'true' : undefined}
+          aria-describedby={boundaryError ? 'boundary-editing-help boundary-editing-error' : 'boundary-editing-help'}
+          on:input={(event) => startBoundaryInput = (event.currentTarget as HTMLInputElement).value}
+          on:change={completeBoundaryEdit}
+          on:keydown={boundaryKeydown}
         />
       </label>
       <label>
@@ -72,9 +125,12 @@
           min="1"
           max={project.audioIdentity.durationMs}
           step="1"
-          value={project.draft.endMs}
-          aria-describedby="boundary-editing-help"
-          on:input={(event) => boundaryChanged('endMs', event.currentTarget as HTMLInputElement)}
+          value={endBoundaryInput}
+          aria-invalid={boundaryError ? 'true' : undefined}
+          aria-describedby={boundaryError ? 'boundary-editing-help boundary-editing-error' : 'boundary-editing-help'}
+          on:input={(event) => endBoundaryInput = (event.currentTarget as HTMLInputElement).value}
+          on:change={completeBoundaryEdit}
+          on:keydown={boundaryKeydown}
         />
       </label>
     </div>
@@ -171,8 +227,10 @@
       ></textarea>
     </label>
 
-    {#if Object.keys($store.errors).length}
-      <div role="alert">Correct the highlighted annotation fields.</div>
+    {#if boundaryError || Object.keys($store.errors).length}
+      <div id={boundaryError ? 'boundary-editing-error' : undefined} role="alert">
+        {boundaryError ?? 'Correct the highlighted annotation fields.'}
+      </div>
     {/if}
 
     <div class="actions">

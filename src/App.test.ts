@@ -26,6 +26,15 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function replaceSequentially(input: HTMLElement, value: string): Promise<void> {
+  await fireEvent.input(input, { target: { value: '' } });
+  let entered = '';
+  for (const digit of value) {
+    entered += digit;
+    await fireEvent.input(input, { target: { value: entered } });
+  }
+}
+
 function renderApp(overrides: Record<string, unknown> = {}) {
   const bridge = makeFakeBridge();
   const close = makeFakeLifecycle();
@@ -84,6 +93,7 @@ describe('App', () => {
     expect(screen.getByTestId('timeline-content').children).toHaveLength(4);
     await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '250' } });
+    await fireEvent.change(screen.getByLabelText('End milliseconds'));
     await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 250 }));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'うん' } });
@@ -120,6 +130,7 @@ describe('App', () => {
 
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
     await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
+    await fireEvent.change(screen.getByLabelText('Start milliseconds'));
     await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
     bridge.audioSetLoop.mockClear();
@@ -127,27 +138,26 @@ describe('App', () => {
 
     const start = screen.getByLabelText('Start milliseconds');
     const end = screen.getByLabelText('End milliseconds');
-    await fireEvent.input(start, { target: { value: '' } });
-    expect(start).toHaveValue(null);
+    await replaceSequentially(start, '3000');
+    expect(start).toHaveValue(3000);
     await Promise.resolve();
     expect(bridge.audioSetLoop).not.toHaveBeenCalled();
-    expect(waveformSpies.setSelection).not.toHaveBeenCalledWith({ startMs: 0, endMs: 1_000 });
+    expect(waveformSpies.setSelection.mock.calls.every(([selection]) => (
+      selection.startMs === 100 && selection.endMs === 1_000
+    ))).toBe(true);
+    await fireEvent.change(start);
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
+    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
 
-    await fireEvent.input(start, { target: { value: '3000' } });
+    await replaceSequentially(end, '4000');
+    expect(end).toHaveValue(4000);
     await Promise.resolve();
     expect(bridge.audioSetLoop).not.toHaveBeenCalled();
-    expect(waveformSpies.setSelection).not.toHaveBeenCalledWith({ startMs: 3_000, endMs: 1_000 });
-
-    await fireEvent.input(end, { target: { value: '' } });
-    expect(end).toHaveValue(null);
-    await Promise.resolve();
-    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
-    expect(waveformSpies.setSelection).not.toHaveBeenCalledWith({ startMs: 3_000, endMs: 0 });
     expect(waveformSpies.setSelection.mock.calls.every(([selection]) => (
       selection.startMs === 100 && selection.endMs === 1_000
     ))).toBe(true);
 
-    await fireEvent.input(end, { target: { value: '4000' } });
+    await fireEvent.change(end);
     await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 3_000, endMs: 4_000 }));
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 3_000, endMs: 4_000 }));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'numeric range' } });
@@ -223,6 +233,87 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
 
     expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/recovered draft does not fit/i);
+    expect(bridge.analyzeAudio).not.toHaveBeenCalled();
+    expect(bridge.audioOpen).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['duplicate annotation IDs', (project: ReturnType<typeof createProject>) => {
+      const annotation = {
+        ...project.draft, id: 'duplicate', startMs: 100, endMs: 200, transcription: 'first',
+        createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z'
+      };
+      project.annotations = [annotation, { ...annotation, startMs: 300, endMs: 400, transcription: 'second' }];
+      project.activeAnnotationId = 'duplicate';
+    }],
+    ['duplicate speaker IDs', (project: ReturnType<typeof createProject>) => {
+      project.speakers[1].id = project.speakers[0].id;
+    }],
+    ['duplicate acoustic tag IDs', (project: ReturnType<typeof createProject>) => {
+      project.acousticTags[1].id = project.acousticTags[0].id;
+    }],
+    ['an ID shared by speaker and acoustic tag definitions', (project: ReturnType<typeof createProject>) => {
+      project.acousticTags[0].id = project.speakers[0].id;
+      project.draft.acousticTagIds = [project.acousticTags[0].id];
+    }]
+  ] as const)('rejects recovered projects with %s', async (_case, corrupt) => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    corrupt(restored);
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/unique nonempty project ID/i);
+    expect(bridge.analyzeAudio).not.toHaveBeenCalled();
+    expect(bridge.audioOpen).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['duplicate speaker label', 'speakers', 1, 'speaker_1'],
+    ['blank speaker label', 'speakers', 0, '   '],
+    ['reserved speaker label', 'speakers', 0, ' none '],
+    ['tabbed speaker label', 'speakers', 0, 'guest\tname'],
+    ['duplicate acoustic tag label', 'acousticTags', 1, 'quiet_dialogue'],
+    ['blank acoustic tag label', 'acousticTags', 0, '   '],
+    ['reserved acoustic tag label', 'acousticTags', 0, 'none'],
+    ['tabbed acoustic tag label', 'acousticTags', 0, 'room\ttone'],
+    ['semicolon acoustic tag label', 'acousticTags', 0, 'music;effects']
+  ] as const)('rejects a recovered project with a %s', async (_case, kind, index, label) => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored[kind][index].label = label;
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/recovered (speaker|acoustic tag) labels are invalid/i);
+    expect(bridge.analyzeAudio).not.toHaveBeenCalled();
+    expect(bridge.audioOpen).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing speaker reference', (project: ReturnType<typeof createProject>) => {
+      project.draft.speakerId = 'missing-speaker';
+    }],
+    ['missing acoustic tag reference', (project: ReturnType<typeof createProject>) => {
+      project.draft.acousticTagIds = ['missing-tag'];
+    }],
+    ['missing active annotation', (project: ReturnType<typeof createProject>) => {
+      project.activeAnnotationId = 'missing-annotation';
+    }]
+  ] as const)('rejects a recovered project with a %s', async (_case, corrupt) => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    corrupt(restored);
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/recovered (draft|active annotation)/i);
     expect(bridge.analyzeAudio).not.toHaveBeenCalled();
     expect(bridge.audioOpen).not.toHaveBeenCalled();
   });
