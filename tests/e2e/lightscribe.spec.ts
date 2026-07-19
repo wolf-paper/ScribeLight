@@ -89,9 +89,28 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   const annotations = page.getByLabel('Saved annotations');
   await expect(annotations).toContainText('待って');
   await expect(annotations).toContainText('はい');
-  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
-  await expect(page.getByTestId('annotation-list-scroll')).toHaveCSS('overflow-y', 'auto');
+  await expect(annotations.locator('.annotation-row')).toHaveCount(10);
+  const annotationScroll = page.getByTestId('annotation-list-scroll');
+  await expect(annotationScroll).toHaveCSS('overflow-y', 'auto');
+  const scrollMetrics = await annotationScroll.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight
+  }));
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
+  const changedScrollTop = await annotationScroll.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(changedScrollTop).toBeGreaterThan(0);
   await expect(annotations.getByRole('button', { name: /page/i })).toHaveCount(0);
+
+  const seededRows = annotations.getByRole('button', { name: /Remove annotation Scroll seed/ });
+  await expect(seededRows).toHaveCount(8);
+  for (let remaining = 8; remaining > 0; remaining -= 1) {
+    await seededRows.first().click();
+    await expect(seededRows).toHaveCount(remaining - 1);
+  }
+  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
 
   await annotations.locator('.annotation-row').first().getByRole('button', { name: /Edit annotation/ }).click();
   await expect(page.getByLabel('Start milliseconds')).toHaveValue('1000');
@@ -175,17 +194,18 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
     const selection = button.parentElement;
     const track = selection?.parentElement;
     if (!selection || !track) throw new Error('selection highlight has no geometry');
-    const trackWidth = Number.parseFloat(track.style.width);
-    const selectionLeft = Number.parseFloat(selection.style.left);
-    const selectionWidth = Number.parseFloat(selection.style.width);
-    if (!(trackWidth > 0) || !Number.isFinite(selectionLeft) || !Number.isFinite(selectionWidth)) {
+    const trackBounds = track.getBoundingClientRect();
+    const selectionBounds = selection.getBoundingClientRect();
+    if (!(trackBounds.width > 0) || !(selectionBounds.width > 0)) {
       throw new Error('selection highlight has invalid geometry');
     }
-    const startMs = Math.round(selectionLeft / trackWidth * 10_000);
-    const endMs = Math.round((selectionLeft + selectionWidth) / trackWidth * 10_000);
-    return { startMs, endMs };
+    const millisecondsPerPixel = 10_000 / trackBounds.width;
+    const startMs = (selectionBounds.left - trackBounds.left) * millisecondsPerPixel;
+    const endMs = (selectionBounds.right - trackBounds.left) * millisecondsPerPixel;
+    return { startMs, endMs, millisecondsPerPixel };
   });
-  expect(highlightedRange).toEqual({ startMs: 3_000, endMs: 4_000 });
+  expect(Math.abs(highlightedRange.startMs - 3_000)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
+  expect(Math.abs(highlightedRange.endMs - 4_000)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
   const transcription = page.getByLabel('Transcription');
   await transcription.fill('もう一度');
   await transcription.press('Enter');

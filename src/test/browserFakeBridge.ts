@@ -42,7 +42,19 @@ const importedFixture: ImportedTsv = {
       confidence: 'medium',
       acousticTags: ['breath'],
       notes: ''
-    }
+    },
+    ...Array.from({ length: 8 }, (_, index) => ({
+      startMs: 3_000 + index * 700,
+      endMs: 3_400 + index * 700,
+      eventType: 'speech' as const,
+      transcription: `Scroll seed ${index + 1}`,
+      intelligibility: 'highly_intelligible' as const,
+      speaker: index % 2 === 0 ? 'speaker_1' : 'speaker_2',
+      overlap: 'none' as const,
+      confidence: 'high' as const,
+      acousticTags: [],
+      notes: ''
+    }))
   ]
 };
 

@@ -42,4 +42,29 @@ describe('Task 15 release configuration', () => {
     expect(window.minWidth).toBe(1280);
     expect(window.height).toBe(800);
   });
+
+  it('uses semantic invalid and disabled states for every non-button form control', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+
+    for (const token of [
+      '--color-invalid:',
+      '--color-invalid-surface:',
+      '--color-disabled-surface:',
+      '--color-disabled-border:',
+      '--color-disabled-text:',
+      '--color-disabled-accent:'
+    ]) expect(css).toContain(token);
+
+    expect(css).toMatch(/\[aria-invalid="true"\]\s*\{[^}]*var\(--color-invalid\)[^}]*var\(--color-invalid-surface\)/s);
+    for (const selector of [
+      'input:disabled',
+      'select:disabled',
+      'textarea:disabled',
+      'option:disabled',
+      'fieldset:disabled',
+      'input[type="radio"]:disabled',
+      'input[type="range"]:disabled'
+    ]) expect(css).toContain(selector);
+    expect(css).toContain(':focus-visible');
+  });
 });
