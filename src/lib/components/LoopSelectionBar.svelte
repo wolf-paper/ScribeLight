@@ -109,14 +109,15 @@
 
 <style>
   .selection-track {
-    background: #151f2f;
+    background: var(--color-panel);
     height: 22px;
     min-width: 0;
     position: relative;
   }
 
   .selection {
-    background: rgb(90 154 255 / 42%);
+    background: var(--color-selection-wash);
+    box-shadow: inset 0 1px var(--color-loop-boundary), inset 0 -1px var(--color-loop-boundary);
     bottom: 2px;
     display: grid;
     grid-template-columns: 8px minmax(0, 1fr) 8px;

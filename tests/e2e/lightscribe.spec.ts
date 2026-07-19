@@ -13,6 +13,7 @@ async function openFixture(page: Page, story: string, reset = true): Promise<voi
   ).__LIGHTSCRIBE_TEST__?.marker)).toBe('LIGHTSCRIBE_BROWSER_FAKE_V1');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Settings' })).toBeEnabled();
 }
 
 async function timelineMetrics(page: Page, pointerX: number) {
@@ -28,10 +29,13 @@ async function timelineMetrics(page: Page, pointerX: number) {
   }, pointerX);
 }
 
-test.use({ viewport: { width: 900, height: 900 } });
+test.use({ viewport: { width: 1280, height: 800 } });
 
 test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 export story', async ({ page }) => {
   await openFixture(page, 'complete-story');
+
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await expect(page.getByText('Ctrl + wheel to zoom')).toBeVisible();
 
   const layers = await page.getByTestId('timeline-content').locator('[data-timeline-layer]').evaluateAll(
     (elements) => elements.map((element) => element.getAttribute('data-timeline-layer'))
@@ -86,6 +90,37 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(annotations).toContainText('待って');
   await expect(annotations).toContainText('はい');
   await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+  await expect(page.getByTestId('annotation-list-scroll')).toHaveCSS('overflow-y', 'auto');
+  await expect(annotations.getByRole('button', { name: /page/i })).toHaveCount(0);
+
+  await annotations.locator('.annotation-row').first().getByRole('button', { name: /Edit annotation/ }).click();
+  await expect(page.getByLabel('Start milliseconds')).toHaveValue('1000');
+  await expect(page.getByLabel('End milliseconds')).toHaveValue('2000');
+  const selectedTranscription = page.getByLabel('Transcription');
+  const originalTranscription = await selectedTranscription.inputValue();
+  expect(originalTranscription).not.toBe('');
+  await expect(page.getByRole('button', { name: 'Update annotation' })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Acoustic tags' }).click();
+  await page.getByRole('option', { name: 'breath' }).click();
+  await expect(page.getByRole('button', { name: 'Remove breath acoustic tag' })).toBeVisible();
+  await selectedTranscription.fill('Selected annotation updated');
+  await selectedTranscription.press('Enter');
+  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+  await expect(annotations).toContainText('Selected annotation updated');
+  await selectedTranscription.fill(originalTranscription);
+  await page.getByRole('button', { name: 'Remove breath acoustic tag' }).click();
+  await selectedTranscription.press('Enter');
+  await page.getByLabel('Start milliseconds').fill('0');
+  await page.getByLabel('Start milliseconds').press('Tab');
+  await page.getByLabel('End milliseconds').fill('1000');
+  await page.getByLabel('End milliseconds').press('Tab');
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+    }
+  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
+  await page.getByRole('button', { name: 'Clear' }).click();
+  await expect(page.getByRole('button', { name: 'Add annotation' })).toBeVisible();
 
   const startBoundary = page.getByLabel('Start milliseconds');
   const endBoundary = page.getByLabel('End milliseconds');
@@ -139,9 +174,15 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   const highlightedRange = await page.getByRole('button', { name: 'Move loop selection' }).evaluate((button) => {
     const selection = button.parentElement;
     const track = selection?.parentElement;
-    if (!selection || !track || track.clientWidth <= 0) throw new Error('selection highlight has no geometry');
-    const startMs = Math.round(selection.offsetLeft / track.clientWidth * 10_000);
-    const endMs = Math.round((selection.offsetLeft + selection.clientWidth) / track.clientWidth * 10_000);
+    if (!selection || !track) throw new Error('selection highlight has no geometry');
+    const trackWidth = Number.parseFloat(track.style.width);
+    const selectionLeft = Number.parseFloat(selection.style.left);
+    const selectionWidth = Number.parseFloat(selection.style.width);
+    if (!(trackWidth > 0) || !Number.isFinite(selectionLeft) || !Number.isFinite(selectionWidth)) {
+      throw new Error('selection highlight has invalid geometry');
+    }
+    const startMs = Math.round(selectionLeft / trackWidth * 10_000);
+    const endMs = Math.round((selectionLeft + selectionWidth) / trackWidth * 10_000);
     return { startMs, endMs };
   });
   expect(highlightedRange).toEqual({ startMs: 3_000, endMs: 4_000 });
@@ -159,6 +200,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(annotations).toContainText('もう一度\n続き');
   await expect(annotations.locator('.annotation-row')).toHaveCount(3);
 
+  await page.getByRole('button', { name: 'Settings' }).click();
   const speaker = page.getByLabel('Rename speaker_1');
   await speaker.fill('narrator');
   await speaker.blur();
@@ -167,6 +209,9 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await tag.fill('whisper');
   await tag.blur();
   await expect(page.getByLabel('Rename whisper')).toHaveValue('whisper');
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.getByRole('button', { name: 'Export TSV' }).click();
   await expect(page.getByRole('status', { name: 'Operation status' }))
@@ -225,6 +270,10 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
 
 test('recovers the saved project after a renderer reopen', async ({ page }) => {
   await openFixture(page, 'recovery');
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('radio', { name: /Crimson Scope/ }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-palette', 'crimson-scope');
+  await page.getByRole('button', { name: 'Close settings' }).click();
   await page.getByLabel('Start milliseconds').fill('5000');
   await page.getByLabel('End milliseconds').fill('6000');
   await page.getByLabel('Transcription').fill('再開');
@@ -232,6 +281,7 @@ test('recovers the saved project after a renderer reopen', async ({ page }) => {
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');
 
   await page.goto(fixtureUrl('recovery'));
+  await expect(page.locator('html')).toHaveAttribute('data-palette', 'crimson-scope');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');

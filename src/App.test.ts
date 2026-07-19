@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { createProject } from './lib/domain/project';
 import type { PeakData } from './lib/bridge/native';
+import { PALETTE_STORAGE_KEY } from './lib/theme/palette';
 import { fakeIdentity, fakePeaks, makeFakeBridge, makeFakeLifecycle, nullPickers } from './test/fakeBridge';
 
 const waveformSpies = vi.hoisted(() => ({
@@ -46,11 +47,14 @@ function renderApp(overrides: Record<string, unknown> = {}) {
 async function openClip() {
   await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
   await screen.findByLabelText('Audio waveform');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Settings' })).toBeEnabled());
 }
 
 describe('App', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
+    delete document.documentElement.dataset.palette;
     Object.values(waveformSpies).forEach((spy) => spy.mockClear());
   });
 
@@ -58,6 +62,77 @@ describe('App', () => {
     renderApp();
     expect(screen.getByRole('heading', { name: 'Lightscribe' })).toBeInTheDocument();
     expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+  });
+
+  it('opens and closes Settings, persists palette changes, and keeps project settings in the modal', async () => {
+    const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
+    renderApp({ pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Speaker manager' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Acoustic tag manager' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Multiline export policy' })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByText('Open a project to manage labels.')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('radio', { name: /Arctic Steel/ }));
+    expect(storageWrite).toHaveBeenCalledWith(PALETTE_STORAGE_KEY, 'arctic-steel');
+    expect(localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('arctic-steel');
+    expect(document.documentElement).toHaveAttribute('data-palette', 'arctic-steel');
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+
+    await openClip();
+    expect(screen.queryByRole('region', { name: 'Speaker manager' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Acoustic tag manager' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('region', { name: 'Speaker manager' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Acoustic tag manager' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    expect(screen.queryByRole('region', { name: 'Speaker manager' })).not.toBeInTheDocument();
+  });
+
+  it('shows Add for a new selection and loads a selected saved annotation for Update', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored.annotations = [{
+      ...restored.draft,
+      id: 'saved-event',
+      startMs: 1_000,
+      endMs: 2_000,
+      transcription: 'Saved transcription',
+      acousticTagIds: [restored.acousticTags[0].id],
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }];
+    restored.activeSelection = { startMs: 3_000, endMs: 4_000 };
+    restored.activeAnnotationId = null;
+    restored.draft = {
+      ...restored.draft,
+      startMs: 3_000,
+      endMs: 4_000,
+      transcription: ''
+    };
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await openClip();
+    const workspace = screen.getByLabelText('Audio waveform').closest('.project-workspace');
+    const timeline = screen.getByTestId('timeline-workspace');
+    const lowerWorkspace = workspace?.querySelector('.lower-workspace');
+    expect(workspace?.firstElementChild).toBe(timeline);
+    expect(lowerWorkspace?.children[0]).toHaveClass('annotation-table');
+    expect(lowerWorkspace?.children[1]).toHaveClass('annotation-dashboard');
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit annotation Saved transcription' }));
+
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_000);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(2_000);
+    expect(screen.getByLabelText('Transcription')).toHaveValue('Saved transcription');
+    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit annotation Saved transcription' })).toHaveAttribute('aria-current', 'true');
   });
 
   it('completes open, select/loop, annotate/update, reopen, import, and export using real stores', async () => {
@@ -81,6 +156,7 @@ describe('App', () => {
     });
 
     await openClip();
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const multilinePolicy = screen.getByRole('combobox', { name: 'Multiline export policy' });
     expect(multilinePolicy).toHaveValue('escape');
     expect(multilinePolicy).toHaveTextContent('Escape line breaks as \\n');
@@ -90,6 +166,7 @@ describe('App', () => {
     await waitFor(() => expect(bridge.saveProject).toHaveBeenCalledWith(expect.objectContaining({
       exportSettings: { multilinePolicy: 'space' }
     })));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     expect(screen.getByTestId('timeline-content').children).toHaveLength(4);
     await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '250' } });
@@ -106,7 +183,9 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(audio).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledTimes(2));
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toHaveValue('space');
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Import TSV' })).toBeEnabled());
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     expect(await screen.findByText('imported')).toBeInTheDocument();
@@ -363,10 +442,12 @@ describe('App', () => {
     });
     await openClip();
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const selector = screen.getByRole('combobox', { name: 'Multiline export policy' }) as HTMLSelectElement;
     const exportButton = screen.getByRole('button', { name: 'Export TSV' });
     selector.value = 'space';
     selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     exportButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await Promise.resolve();
 
@@ -389,10 +470,12 @@ describe('App', () => {
     });
     await openClip();
 
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const selector = screen.getByRole('combobox', { name: 'Multiline export policy' }) as HTMLSelectElement;
     const importButton = screen.getByRole('button', { name: 'Import TSV' });
     selector.value = 'quoted';
     selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     importButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await Promise.resolve();
 
@@ -517,12 +600,10 @@ describe('App', () => {
     expect(screen.getByLabelText('Notes')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Show clock time' })).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
     expect(screen.getByLabelText('Volume')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeDisabled();
-    expect(screen.getByLabelText('New speaker')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Add acoustic tag' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeDisabled();
     expect(screen.getByLabelText('Audio waveform').closest('.project-workspace')).toHaveProperty('inert', true);
     await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'must be blocked' } });
     await fireEvent.keyDown(window, { key: 'i' });

@@ -32,13 +32,14 @@ describe('Task 15 release configuration', () => {
     expect(fixture).not.toContain('\uFFFD');
   });
 
-  it('starts and constrains the native window at the layout minimum width', () => {
+  it('starts the native window at the approved workspace dimensions', () => {
     const configuration = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')) as {
-      app: { windows: Array<{ width?: number; minWidth?: number }> };
+      app: { windows: Array<{ width?: number; minWidth?: number; height?: number }> };
     };
     const window = configuration.app.windows[0];
 
-    expect(window.width).toBeGreaterThanOrEqual(900);
-    expect(window.minWidth).toBeGreaterThanOrEqual(900);
+    expect(window.width).toBe(1280);
+    expect(window.minWidth).toBe(1280);
+    expect(window.height).toBe(800);
   });
 });

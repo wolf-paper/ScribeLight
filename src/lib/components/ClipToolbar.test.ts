@@ -67,16 +67,4 @@ describe('ClipToolbar', () => {
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDisabled();
   });
 
-  it('disables Settings when the temporary App compatibility action is absent', async () => {
-    const { openSettings: _openSettings, ...legacyActions } = actions();
-    render(ClipToolbar, {
-      filename: 'clip.wav', playing: false, loopEnabled: false, canLoop: true,
-      format: 'seconds', multilinePolicy: 'escape', actions: legacyActions
-    });
-
-    const settings = screen.getByRole('button', { name: 'Settings' });
-    expect(settings).toBeDisabled();
-    await fireEvent.click(settings);
-    expect(_openSettings).not.toHaveBeenCalled();
-  });
 });

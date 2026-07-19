@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MultilinePolicy, TimeDisplayFormat } from '../domain/types';
+  import type { TimeDisplayFormat } from '../domain/types';
 
   interface Actions {
     open(): void;
@@ -7,7 +7,7 @@
     togglePlay(): void;
     toggleLoop(): void;
     toggleFormat(): void;
-    openSettings?(): void;
+    openSettings(): void;
     exportTsv(): void;
     cancelAnalysis(): void;
     setVolume(value: number): void;
@@ -23,8 +23,6 @@
     analysisPercent?: number | null;
     busy?: boolean;
     settingsBusy?: boolean;
-    // TODO(Task 6): remove this ignored compatibility prop and make openSettings required after App migration.
-    multilinePolicy?: MultilinePolicy;
     actions: Actions;
   }
 
@@ -73,7 +71,7 @@
     </button>
     <button type="button" disabled={!filename || busy || settingsBusy} onclick={actions.importTsv}>Import TSV</button>
     <button type="button" disabled={!filename || busy || settingsBusy} onclick={actions.exportTsv}>Export TSV</button>
-    <button type="button" disabled={busy || settingsBusy || !actions.openSettings} onclick={() => actions.openSettings?.()}>Settings</button>
+    <button type="button" disabled={busy || settingsBusy} onclick={actions.openSettings}>Settings</button>
   </div>
   {#if analysisPercent !== null}
     <div class="analysis-status">

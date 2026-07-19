@@ -82,25 +82,35 @@
   }
 </script>
 
-<div bind:this={viewport} class="timeline-viewport" data-testid="timeline-viewport" aria-disabled={disabled} inert={disabled} on:wheel={wheel}>
-  <div class="timeline-scroll-surface" data-testid="timeline-scroll-surface" style:width={`${scrollSurfaceWidth}px`}>
-    <div class="timeline-content" data-testid="timeline-content" style:width={`${contentWidth}px`}>
-      <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="top-ruler" />
-      <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
-      <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
-        {#if peaks}
-          <WaveformView {peaks} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
-        {/if}
+<section class="timeline-workspace" data-testid="timeline-workspace" aria-labelledby="timeline-title">
+  <header class="timeline-header">
+    <h2 id="timeline-title">Timeline</h2>
+    <p>Ctrl + wheel to zoom</p>
+  </header>
+  <div bind:this={viewport} class="timeline-viewport" data-testid="timeline-viewport" aria-disabled={disabled} inert={disabled} on:wheel={wheel}>
+    <div class="timeline-scroll-surface" data-testid="timeline-scroll-surface" style:width={`${scrollSurfaceWidth}px`}>
+      <div class="timeline-content" data-testid="timeline-content" style:width={`${contentWidth}px`}>
+        <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="top-ruler" />
+        <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
+        <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
+          {#if peaks}
+            <WaveformView {peaks} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
+          {/if}
+        </div>
+        <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />
       </div>
-      <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />
     </div>
   </div>
-</div>
+</section>
 
 <style>
   .timeline-viewport {
     overflow-x: auto;
     overflow-y: hidden;
+  }
+
+  .timeline-workspace {
+    min-width: 0;
   }
 
   .timeline-content {

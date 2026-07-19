@@ -45,7 +45,7 @@
 </script>
 
 <section aria-label="Saved annotations" class="annotation-table">
-  <div class="annotation-list-scroll" data-testid="annotation-list-scroll" role="grid" aria-label="Saved annotations">
+  <div class="annotation-list-scroll" data-testid="annotation-list-scroll" role="grid">
     <div class="annotation-list-header" role="row">
       <div role="columnheader">Time</div>
       <div role="columnheader">Speaker</div>

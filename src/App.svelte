@@ -16,6 +16,7 @@
   import AnnotationTable from './lib/components/AnnotationTable.svelte';
   import ClipToolbar from './lib/components/ClipToolbar.svelte';
   import ErrorBanner from './lib/components/ErrorBanner.svelte';
+  import SettingsDialog from './lib/components/SettingsDialog.svelte';
   import TimelineWorkspace from './lib/components/TimelineWorkspace.svelte';
   import { mergeImportedTsv } from './lib/domain/importTsv';
   import { createProject } from './lib/domain/project';
@@ -24,6 +25,7 @@
   import { formatUnknownError } from './lib/errors';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
+  import { loadPalette, persistPalette, type PaletteId } from './lib/theme/palette';
 
   interface PickerSet {
     audio(): Promise<string | null>;
@@ -78,6 +80,8 @@
   let transitionOwner: number | null = null;
   let transitionBusy = $state(false);
   let settingsBusy = $state(false);
+  let settingsOpen = $state(false);
+  let palette = $state<PaletteId>(loadPalette(localStorage));
   let multilinePolicyMutation: Promise<boolean> | null = null;
   let closePromise: Promise<void> | null = null;
   let cleanupRequested = false;
@@ -574,6 +578,11 @@
     return pending ? pending : true;
   }
 
+  function changePalette(value: PaletteId): void {
+    palette = value;
+    persistPalette(value);
+  }
+
   function setSelection(selection: Selection): void {
     if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
@@ -696,7 +705,7 @@
     togglePlay,
     toggleLoop,
     toggleFormat: () => void toggleFormat(),
-    setMultilinePolicy: (value: MultilinePolicy) => void setMultilinePolicy(value),
+    openSettings: () => { settingsOpen = true; },
     exportTsv: () => void exportTsv(),
     cancelAnalysis: () => void cancelAnalysis(),
     setVolume: (value: number) => {
@@ -709,45 +718,57 @@
 
 <main class="app-shell">
   <h1 class="product-title">Lightscribe</h1>
-  <ErrorBanner message={persistentError} dismiss={() => persistentError = null} />
   <ClipToolbar
     {filename}
     playing={playback.state === 'playing'}
     loopEnabled={playback.loopRange !== null}
     {canLoop}
     format={project?.displayFormat ?? 'seconds'}
-    multilinePolicy={project?.exportSettings.multilinePolicy ?? 'escape'}
     volume={playback.volume}
     {analysisPercent}
     busy={transitionBusy}
     {settingsBusy}
     actions={toolbarActions}
   />
+  <ErrorBanner message={persistentError} dismiss={() => persistentError = null} />
   <div class="app-status" role="status" aria-label="Operation status" aria-live="polite">{status}</div>
   {#if project}
     <div class="project-workspace" aria-busy={transitionBusy} inert={transitionBusy}>
-    <TimelineWorkspace
-      durationMs={project.audioIdentity.durationMs}
-      format={project.displayFormat}
-      selection={project.activeSelection}
-      onchange={setSelection}
-      {peaks}
-      playheadMs={playback.positionMs}
-      disabled={transitionBusy}
-    />
-    <AnnotationDashboard store={projectStore} disabled={transitionBusy} />
-    <AnnotationTable
-      annotations={tableAnnotations}
-      activeId={project.activeAnnotationId}
-      format={project.displayFormat}
-      disabled={transitionBusy}
-      onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
-      onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
-    />
+      <TimelineWorkspace
+        durationMs={project.audioIdentity.durationMs}
+        format={project.displayFormat}
+        selection={project.activeSelection}
+        onchange={setSelection}
+        {peaks}
+        playheadMs={playback.positionMs}
+        disabled={transitionBusy}
+      />
+      <div class="lower-workspace">
+        <AnnotationTable
+          annotations={tableAnnotations}
+          activeId={project.activeAnnotationId}
+          format={project.displayFormat}
+          disabled={transitionBusy}
+          onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
+          onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
+        />
+        <AnnotationDashboard store={projectStore} disabled={transitionBusy} />
+      </div>
     </div>
   {:else}
     <section class="empty-state">
       <p>Open an MP3 or WAV file to begin.</p>
     </section>
+  {/if}
+  {#if settingsOpen}
+    <SettingsDialog
+      store={project ? projectStore : null}
+      {palette}
+      multilinePolicy={project?.exportSettings.multilinePolicy ?? 'escape'}
+      disabled={transitionBusy || settingsBusy}
+      onpalette={changePalette}
+      onpolicy={(value) => void setMultilinePolicy(value)}
+      onclose={() => { settingsOpen = false; }}
+    />
   {/if}
 </main>

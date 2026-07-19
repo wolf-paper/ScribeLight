@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "Lightscribe",
-        "width": 900,
-        "minWidth": 900,
-        "height": 600
+        "width": 1280,
+        "minWidth": 1280,
+        "height": 800
       }
     ],
     "security": {

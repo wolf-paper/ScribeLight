@@ -36,11 +36,12 @@ describe('TimelineWorkspace', () => {
     await waitFor(() => expect(viewport.scrollLeft).toBeCloseTo(62.5));
   });
 
-  it('renders rulers, loop selection, waveform slot, and rulers in the required order', () => {
+  it('renders the zoom hint and keeps rulers, loop selection, waveform, and rulers in the required order', () => {
     renderTimeline();
     const content = screen.getByTestId('timeline-content');
     const layers = Array.from(content.children).map((element) => element.getAttribute('data-timeline-layer'));
 
+    expect(screen.getByText('Ctrl + wheel to zoom')).toBeInTheDocument();
     expect(layers).toEqual(['top-ruler', 'loop-selection', 'waveform', 'bottom-ruler']);
     expect(content.querySelectorAll('.time-ruler')).toHaveLength(2);
     expect(Array.from(content.querySelectorAll<HTMLElement>('.time-ruler')).map((ruler) => ruler.style.width)).toEqual(['1000px', '1000px']);
