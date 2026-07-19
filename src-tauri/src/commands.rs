@@ -1,12 +1,51 @@
 use crate::{
+    audio::{decoder::AudioDecoder, peaks},
     error::AppError,
-    model::{MultilinePolicy, Project},
+    model::{AudioIdentity, MultilinePolicy, PeakData, Project},
     persistence,
     tsv::{self, ImportedTsv},
 };
 use atomic_write_file::AtomicWriteFile;
-use std::{io::Write, path::PathBuf};
-use tauri::{AppHandle, Manager};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Default)]
+pub struct AnalysisState {
+    active: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+impl AnalysisState {
+    fn begin(&self) -> Result<Arc<AtomicBool>, AppError> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| AppError::Audio("Analysis state lock poisoned".to_owned()))?;
+        let current = Arc::new(AtomicBool::new(false));
+        if let Some(previous) = active.replace(current.clone()) {
+            previous.store(true, Ordering::Release);
+        }
+        Ok(current)
+    }
+
+    fn cancel(&self) -> Result<(), AppError> {
+        if let Some(active) = self
+            .active
+            .lock()
+            .map_err(|_| AppError::Audio("Analysis state lock poisoned".to_owned()))?
+            .as_ref()
+        {
+            active.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+}
 
 fn app_data(app: &AppHandle) -> Result<PathBuf, AppError> {
     app.path()
@@ -45,4 +84,46 @@ pub fn write_tsv(path: String, project: Project) -> Result<(), AppError> {
     file.write_all(text.as_bytes())?;
     file.commit()?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn inspect_audio(path: String) -> Result<AudioIdentity, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        AudioDecoder::open(Path::new(&path)).map(|decoder| decoder.identity().clone())
+    })
+    .await
+    .map_err(|error| AppError::Audio(error.to_string()))?
+}
+
+#[tauri::command]
+pub async fn analyze_audio(
+    app: AppHandle,
+    state: State<'_, AnalysisState>,
+    path: String,
+) -> Result<PeakData, AppError> {
+    let cancelled = state.begin()?;
+    let cache_dir = app_data(&app)?.join("cache");
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = Path::new(&path);
+        let identity = AudioDecoder::open(source)?.identity().clone();
+        if let Some(cached) = peaks::read_cache(&cache_dir, &identity)? {
+            return Ok::<PeakData, AppError>(cached);
+        }
+        let progress_app = app.clone();
+        let data = peaks::analyze_path(source, &cancelled, |value| {
+            let _ = progress_app.emit("analysis-progress", value);
+        })?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err(AppError::Audio("Waveform analysis cancelled".to_owned()));
+        }
+        peaks::write_cache(&cache_dir, &identity, &data)?;
+        Ok::<PeakData, AppError>(data)
+    })
+    .await
+    .map_err(|error| AppError::Audio(error.to_string()))?
+}
+
+#[tauri::command]
+pub fn cancel_analysis(state: State<'_, AnalysisState>) -> Result<(), AppError> {
+    state.cancel()
 }

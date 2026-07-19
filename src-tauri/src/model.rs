@@ -12,6 +12,22 @@ pub struct AudioIdentity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PeakData {
+    pub duration_ms: u64,
+    pub sample_rate: u32,
+    pub frames_per_peak: u32,
+    pub channels: Vec<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisProgress {
+    pub processed_ms: u64,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Selection {
     #[serde(rename = "startMs")]
     pub start_ms: u64,
