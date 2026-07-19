@@ -14,6 +14,39 @@ use symphonia::core::{
 
 const MAX_DURATION_MS: u64 = 30 * 60 * 1_000;
 
+pub(crate) fn modified_ms(time: std::time::SystemTime) -> Result<i64, AppError> {
+    let duration = time.duration_since(std::time::UNIX_EPOCH).map_err(|_| {
+        AppError::Audio("Source modification time predates the Unix epoch".to_owned())
+    })?;
+    i64::try_from(duration.as_millis())
+        .map_err(|_| AppError::Audio("Source modification time is out of range".to_owned()))
+}
+
+pub(crate) fn metadata_modified_ms(metadata: &std::fs::Metadata) -> Result<i64, AppError> {
+    modified_ms(metadata.modified().map_err(|error| {
+        AppError::Audio(format!("Cannot read source modification time: {error}"))
+    })?)
+}
+
+#[cfg(test)]
+mod mtime_tests {
+    use super::*;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    #[test]
+    fn converts_epoch_milliseconds_strictly() {
+        assert_eq!(
+            modified_ms(UNIX_EPOCH + Duration::from_millis(42)).unwrap(),
+            42
+        );
+    }
+
+    #[test]
+    fn rejects_pre_epoch_times() {
+        assert!(modified_ms(UNIX_EPOCH - Duration::from_secs(1)).is_err());
+    }
+}
+
 pub struct DecodedChunk {
     pub start_frame: u64,
     pub channels: u16,
@@ -47,12 +80,7 @@ impl AudioDecoder {
 
         let canonical = path.canonicalize()?;
         let metadata = std::fs::metadata(&canonical)?;
-        let modified_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-            .unwrap_or_default();
+        let modified_ms = metadata_modified_ms(&metadata)?;
 
         let mut hint = Hint::new();
         hint.with_extension(&extension);

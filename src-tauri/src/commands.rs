@@ -1,5 +1,8 @@
 use crate::{
-    audio::{decoder::AudioDecoder, peaks},
+    audio::{
+        decoder::{metadata_modified_ms, AudioDecoder},
+        peaks,
+    },
     error::AppError,
     model::{AudioIdentity, MultilinePolicy, PeakData, Project},
     persistence,
@@ -185,16 +188,7 @@ fn same_source_identity(left: &AudioIdentity, right: &AudioIdentity) -> bool {
 fn source_identity(path: &Path) -> Result<AudioIdentity, AppError> {
     let canonical = path.canonicalize()?;
     let metadata = std::fs::metadata(&canonical)?;
-    let modified_ms = metadata
-        .modified()
-        .map_err(|error| AppError::Audio(format!("Cannot read source modification time: {error}")))?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| {
-            AppError::Audio("Source modification time predates the Unix epoch".to_owned())
-        })?
-        .as_millis()
-        .try_into()
-        .map_err(|_| AppError::Audio("Source modification time is out of range".to_owned()))?;
+    let modified_ms = metadata_modified_ms(&metadata)?;
     Ok(AudioIdentity {
         canonical_path: canonical.to_string_lossy().into_owned(),
         size: metadata.len(),
