@@ -78,8 +78,10 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('region', { name: 'Acoustic tag manager' })).toBeInTheDocument();
   });
 
-  it('offers all multiline policies and reports palette and policy changes', async () => {
-    const handlers = props();
+  it('offers all multiline policies and reports palette and policy changes for a project', async () => {
+    const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
+    store.open(createProject(audio));
+    const handlers = props(store);
     render(SettingsDialog, handlers);
 
     await fireEvent.click(screen.getByRole('radio', { name: /Arctic Steel/ }));
@@ -91,6 +93,22 @@ describe('SettingsDialog', () => {
 
     expect(handlers.onpalette).toHaveBeenCalledWith('arctic-steel');
     expect(handlers.onpolicy).toHaveBeenCalledWith('quoted');
+  });
+
+  it('keeps Appearance usable while disabling Export without a project', async () => {
+    const handlers = props();
+    render(SettingsDialog, handlers);
+
+    const policy = screen.getByRole('combobox', { name: 'Multiline export policy' });
+    expect(policy).toBeDisabled();
+    expect(screen.getByText('Open a project to configure export.')).toBeInTheDocument();
+    await fireEvent.change(policy, { target: { value: 'quoted' } });
+    expect(handlers.onpolicy).not.toHaveBeenCalled();
+
+    const palette = screen.getByRole('radio', { name: /Arctic Steel/ });
+    expect(palette).toBeEnabled();
+    await fireEvent.click(palette);
+    expect(handlers.onpalette).toHaveBeenCalledWith('arctic-steel');
   });
 
   it('closes from Escape and the close button', async () => {

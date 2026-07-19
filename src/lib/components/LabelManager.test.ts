@@ -3,6 +3,7 @@ import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 import { createProject } from '../domain/project';
 import { ProjectStore } from '../state/projectStore';
+import { stableColorSlot } from '../theme/palette';
 import SettingsDialog from './SettingsDialog.svelte';
 
 const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 };
@@ -30,12 +31,15 @@ describe('SpeakerManager', () => {
     await waitFor(() => expect(get(store).project!.speakers.at(-1)!.label).toBe('narrator'));
     const added = get(store).project!.speakers.at(-1)!;
     expect(added.label).toBe('narrator');
+    const expectedSlot = String(stableColorSlot(added.id, 5));
+    expect(screen.getByTestId(`speaker-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
 
     const rename = await screen.findByLabelText('Rename narrator');
     await fireEvent.input(rename, { target: { value: 'host' } });
     await fireEvent.blur(rename);
 
     await waitFor(() => expect(get(store).project!.speakers.at(-1)).toEqual({ id: added.id, label: 'host' }));
+    expect(screen.getByTestId(`speaker-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
     expect(saveProject).toHaveBeenLastCalledWith(expect.objectContaining({ speakers: expect.arrayContaining([{ id: added.id, label: 'host' }]) }));
   });
 
@@ -106,11 +110,14 @@ describe('AcousticTagManager', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add acoustic tag' }));
     await waitFor(() => expect(get(store).project!.acousticTags.at(-1)!.label).toBe('whisper'));
     const added = get(store).project!.acousticTags.at(-1)!;
+    const expectedSlot = String(stableColorSlot(added.id, 5));
+    expect(screen.getByTestId(`tag-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
     const rename = await screen.findByLabelText('Rename whisper');
     await fireEvent.input(rename, { target: { value: 'aside' } });
     await fireEvent.blur(rename);
 
     await waitFor(() => expect(get(store).project!.acousticTags.at(-1)).toEqual({ id: added.id, label: 'aside' }));
+    expect(screen.getByTestId(`tag-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
   });
 
   it('only removes a referenced tag after confirmation and clears every reference', async () => {

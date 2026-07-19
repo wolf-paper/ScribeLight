@@ -64,6 +64,15 @@ describe('App', () => {
     expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
   });
 
+  it('mounts with the Ion Magenta fallback when the localStorage getter throws', async () => {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('storage denied'); });
+
+    expect(() => renderApp()).not.toThrow();
+    expect(screen.queryByRole('alert', { name: 'Application error' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.getByRole('radio', { name: /Ion Magenta/ })).toBeChecked();
+  });
+
   it('opens and closes Settings, persists palette changes, and keeps project settings in the modal', async () => {
     const storageWrite = vi.spyOn(Storage.prototype, 'setItem');
     renderApp({ pickers: { ...nullPickers, audio: async () => 'clip.wav' } });

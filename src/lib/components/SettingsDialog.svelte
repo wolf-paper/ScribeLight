@@ -59,6 +59,11 @@
     const target = event.target;
     if (dialog?.open && target instanceof Node && !dialog.contains(target)) closeButton.focus();
   }
+
+  function policyChanged(event: Event): void {
+    if (disabled || !store) return;
+    onpolicy((event.currentTarget as HTMLSelectElement).value as MultilinePolicy);
+  }
 </script>
 
 <svelte:window onfocusin={containFocus} />
@@ -101,13 +106,16 @@
         <h3 id="settings-export-title">Export</h3>
         <label class="settings-field">
           <span>Multiline export policy</span>
-          <select aria-label="Multiline export policy" value={multilinePolicy} {disabled}
-            onchange={(event) => onpolicy((event.currentTarget as HTMLSelectElement).value as MultilinePolicy)}>
+          <select aria-label="Multiline export policy" value={multilinePolicy} disabled={disabled || !store}
+            onchange={policyChanged}>
             <option value="escape">Escape line breaks as \n</option>
             <option value="space">Replace line breaks with spaces</option>
             <option value="quoted">Preserve line breaks in quoted fields</option>
           </select>
         </label>
+        {#if !store}
+          <p class="settings-empty">Open a project to configure export.</p>
+        {/if}
       </section>
     </div>
   </dialog>

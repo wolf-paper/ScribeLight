@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
+import { stableColorSlot } from '../theme/palette';
 import AcousticTagSelect from './AcousticTagSelect.svelte';
 
 const tags = [
@@ -22,6 +23,9 @@ describe('AcousticTagSelect', () => {
     await fireEvent.input(search, { target: { value: 'bre' } });
     const option = screen.getByRole('option', { name: 'breath' });
     expect(option).toBeVisible();
+    expect(within(option).getByTestId('acoustic-tag-cue-breath-id')).toHaveAttribute(
+      'data-color-slot', String(stableColorSlot('breath-id', 5))
+    );
     expect(combobox).toHaveAttribute('aria-controls', screen.getByRole('listbox').id);
 
     await fireEvent.keyDown(search, { key: 'ArrowDown' });
@@ -43,6 +47,23 @@ describe('AcousticTagSelect', () => {
 
     await fireEvent.click(quiet);
     expect(onchange).toHaveBeenCalledWith(['quiet-id', 'laugh-id']);
+  });
+
+  it('keeps an option color slot stable when its label changes', async () => {
+    const view = render(AcousticTagSelect, { tags, selectedIds: [], onchange: vi.fn() });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Acoustic tags' }));
+    const expectedSlot = String(stableColorSlot('quiet-id', 5));
+    expect(within(screen.getByRole('option', { name: 'quiet_dialogue' }))
+      .getByTestId('acoustic-tag-cue-quiet-id')).toHaveAttribute('data-color-slot', expectedSlot);
+
+    await view.rerender({
+      tags: tags.map((tag) => tag.id === 'quiet-id' ? { ...tag, label: 'room_tone' } : tag),
+      selectedIds: [],
+      onchange: vi.fn()
+    });
+
+    expect(within(screen.getByRole('option', { name: 'room_tone' }))
+      .getByTestId('acoustic-tag-cue-quiet-id')).toHaveAttribute('data-color-slot', expectedSlot);
   });
 
   it('moves the active option with ArrowDown and ArrowUp', async () => {

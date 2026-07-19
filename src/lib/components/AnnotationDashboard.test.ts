@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 import { createProject } from '../domain/project';
@@ -153,10 +153,58 @@ describe('AnnotationDashboard', () => {
     const store = setup();
     const project = get(store).project!;
     await fireEvent.change(screen.getByLabelText('Speaker'), { target: { value: project.speakers[1].id } });
+    expect(screen.getByTestId('speaker-selection-cue')).toHaveAttribute('data-color-slot');
     await fireEvent.click(screen.getByRole('combobox', { name: 'Acoustic tags' }));
     await fireEvent.click(screen.getByRole('option', { name: project.acousticTags[0].label }));
     expect(get(store).project!.draft.speakerId).toBe(project.speakers[1].id);
     expect(get(store).project!.draft.acousticTagIds).toEqual([project.acousticTags[0].id]);
+  });
+
+  it('removes the active annotation through the inspector and persists a fresh editor state', async () => {
+    const saveProject = vi.fn(async () => undefined);
+    const store = new ProjectStore({ saveProject }, () => 'active-event');
+    const project = createProject({ canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 });
+    store.open(project);
+    store.patchDraft({ startMs: 10, endMs: 20, transcription: 'remove me' });
+    const view = render(AnnotationDashboard, { store, disabled: false });
+
+    expect(screen.queryByRole('button', { name: 'Remove annotation' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Add annotation' }));
+    await waitFor(() => expect(get(store).project!.activeAnnotationId).toBe('active-event'));
+    expect(screen.getByRole('button', { name: 'Remove annotation' })).toBeInTheDocument();
+
+    saveProject.mockClear();
+    await view.rerender({ store, disabled: true });
+    expect(screen.getByRole('button', { name: 'Remove annotation' })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove annotation' }));
+    expect(saveProject).not.toHaveBeenCalled();
+
+    await view.rerender({ store, disabled: false });
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove annotation' }));
+    await waitFor(() => expect(saveProject).toHaveBeenCalledWith(expect.objectContaining({
+      annotations: [],
+      activeAnnotationId: null,
+      activeSelection: null
+    })));
+    expect(get(store).project).toMatchObject({
+      annotations: [],
+      activeAnnotationId: null,
+      activeSelection: null,
+      draft: {
+        startMs: 0,
+        endMs: 0,
+        eventType: 'speech',
+        transcription: '',
+        intelligibility: 'highly_intelligible',
+        speakerId: project.speakers[0].id,
+        overlap: 'none',
+        confidence: 'high',
+        acousticTagIds: [],
+        notes: ''
+      }
+    });
+    expect(screen.queryByRole('button', { name: 'Remove annotation' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
   });
 
   it('updates, clears, and keeps validation feedback visible', async () => {

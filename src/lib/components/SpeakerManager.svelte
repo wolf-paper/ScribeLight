@@ -1,6 +1,7 @@
 <script lang="ts">
   import { addLabel, removeSpeaker, renameSpeaker } from '../domain/project';
   import type { ProjectStore } from '../state/projectStore';
+  import { stableColorSlot } from '../theme/palette';
 
   export let store: ProjectStore;
   export let disabled = false;
@@ -35,7 +36,15 @@
       {@const referenced = project.annotations.some((annotation) => annotation.speakerId === speaker.id) || project.draft.speakerId === speaker.id}
       <div class="label-row">
         <label>
-          <span>Name</span>
+          <span class="label-name">
+            <span
+              class="speaker-color-cue"
+              data-testid={`speaker-manager-cue-${speaker.id}`}
+              data-color-slot={stableColorSlot(speaker.id, 5)}
+              aria-hidden="true"
+            ></span>
+            <span>Name</span>
+          </span>
           <input
             aria-label={`Rename ${speaker.label}`}
             value={speaker.label}

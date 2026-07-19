@@ -67,4 +67,18 @@ describe('Task 15 release configuration', () => {
     ]) expect(css).toContain(selector);
     expect(css).toContain(':focus-visible');
   });
+
+  it('defines exact selection-region tokens per palette and a bounded proportional waveform height', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+
+    for (const declaration of [
+      '--color-selection-region: rgb(239 91 173 / .28);',
+      '--color-selection-region: rgb(56 189 248 / .28);',
+      '--color-selection-region: rgb(185 120 246 / .28);',
+      '--color-selection-region: rgb(255 100 124 / .28);'
+    ]) expect(css).toContain(declaration);
+
+    expect(css).toMatch(/\.waveform,\s*\.waveform-slot\s*\{[^}]*height:\s*clamp\(190px,\s*28vh,\s*300px\)/s);
+    expect(css).not.toMatch(/\.waveform,\s*\.waveform-slot\s*\{\s*height:\s*190px\s*;/s);
+  });
 });

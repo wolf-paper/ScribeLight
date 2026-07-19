@@ -3,6 +3,7 @@
   import { normalizeDraftForEventType } from '../domain/validation';
   import { formatTime } from '../domain/time';
   import type { EventType } from '../domain/types';
+  import { stableColorSlot } from '../theme/palette';
   import AcousticTagSelect from './AcousticTagSelect.svelte';
 
   export let store: ProjectStore;
@@ -141,19 +142,29 @@
         <div class="inspector-pair">
           <label>
             Speaker
-            <select
-              aria-label="Speaker"
-              disabled={project.draft.eventType === 'non_speech'}
-              value={project.draft.speakerId ?? ''}
-              on:change={(event) => store.patchDraft({ speakerId: (event.currentTarget as HTMLSelectElement).value || null })}
-            >
-              {#if project.draft.eventType === 'non_speech'}
-                <option value="">None</option>
+            <div class="speaker-select-control">
+              {#if project.draft.speakerId}
+                <span
+                  class="speaker-color-cue"
+                  data-testid="speaker-selection-cue"
+                  data-color-slot={stableColorSlot(project.draft.speakerId, 5)}
+                  aria-hidden="true"
+                ></span>
               {/if}
-              {#each project.speakers as speaker}
-                <option value={speaker.id}>{speaker.label}</option>
-              {/each}
-            </select>
+              <select
+                aria-label="Speaker"
+                disabled={project.draft.eventType === 'non_speech'}
+                value={project.draft.speakerId ?? ''}
+                on:change={(event) => store.patchDraft({ speakerId: (event.currentTarget as HTMLSelectElement).value || null })}
+              >
+                {#if project.draft.eventType === 'non_speech'}
+                  <option value="">None</option>
+                {/if}
+                {#each project.speakers as speaker}
+                  <option value={speaker.id}>{speaker.label}</option>
+                {/each}
+              </select>
+            </div>
           </label>
           <label>
             Event type
@@ -231,6 +242,11 @@
 
       <div class="actions">
         <button type="button" on:click={submit}>{project.activeAnnotationId ? 'Update annotation' : 'Add annotation'}</button>
+        {#if project.activeAnnotationId}
+          <button type="button" on:click={() => {
+            if (!disabled) void store.removeAnnotation(project.activeAnnotationId!);
+          }}>Remove annotation</button>
+        {/if}
         <button type="button" on:click={() => store.clearDraft()}>Clear</button>
       </div>
     </fieldset>

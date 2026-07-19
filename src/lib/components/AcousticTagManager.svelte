@@ -1,6 +1,7 @@
 <script lang="ts">
   import { addLabel, removeTag, renameTag } from '../domain/project';
   import type { ProjectStore } from '../state/projectStore';
+  import { stableColorSlot } from '../theme/palette';
 
   export let store: ProjectStore;
   export let disabled = false;
@@ -32,7 +33,15 @@
     {#each project.acousticTags as tag (tag.id)}
       <div class="label-row">
         <label>
-          <span>Name</span>
+          <span class="label-name">
+            <span
+              class="tag-color-cue"
+              data-testid={`tag-manager-cue-${tag.id}`}
+              data-color-slot={stableColorSlot(tag.id, 5)}
+              aria-hidden="true"
+            ></span>
+            <span>Name</span>
+          </span>
           <input
             aria-label={`Rename ${tag.label}`}
             value={tag.label}

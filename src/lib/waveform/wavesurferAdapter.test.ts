@@ -30,12 +30,12 @@ function createDouble() {
   const disposers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
   const renderer = { renderProgress: vi.fn() };
   const regions = {
-    addRegion: vi.fn((options: { id: string; start: number; end: number }) => {
+    addRegion: vi.fn((options: { id: string; start: number; end: number; color?: string }) => {
       const region: RegionDouble = {
         id: options.id,
         start: options.start,
         end: options.end,
-        setOptions: vi.fn((next: { start?: number; end?: number }) => {
+        setOptions: vi.fn((next: { start?: number; end?: number; color?: string }) => {
           region.start = next.start ?? region.start;
           region.end = next.end ?? region.end;
           regionListeners.get('region-updated')?.(region);
@@ -58,11 +58,12 @@ function createDouble() {
       return disposers[3];
     }),
     getRenderer: vi.fn(() => renderer),
+    setOptions: vi.fn(),
     zoom: vi.fn(),
     destroy: vi.fn()
   };
   let factoryOptions: unknown;
-  const factory = ((options: unknown) => {
+  const factory = vi.fn((options: unknown) => {
     factoryOptions = options;
     return wave as never;
   }) as never;
@@ -77,6 +78,20 @@ function createDouble() {
     regions,
     wave
   };
+}
+
+type PaletteTokens = Record<
+  '--color-waveform' | '--color-waveform-active' | '--color-playhead' | '--color-selection-region',
+  string
+>;
+
+function mockPaletteTokens(container: HTMLElement, tokens: PaletteTokens) {
+  const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+  return vi.spyOn(window, 'getComputedStyle').mockImplementation((element, pseudoElement) => (
+    element === container
+      ? { getPropertyValue: (name: string) => tokens[name as keyof PaletteTokens] ?? '' } as unknown as CSSStyleDeclaration
+      : nativeGetComputedStyle(element, pseudoElement)
+  ));
 }
 
 describe('createWaveformAdapter', () => {
@@ -109,6 +124,8 @@ describe('createWaveformAdapter', () => {
     canonical.end = 0.3336;
     regionListeners.get('region-updated')?.(canonical);
     expect(changed).toHaveBeenCalledWith({ startMs: 333, endMs: 334 });
+
+    adapter.destroy();
   });
 
   it('removes the prior region as a second user drag starts, then emits once when it completes', () => {
@@ -141,6 +158,8 @@ describe('createWaveformAdapter', () => {
     userRegion.end = 2;
     regionListeners.get('region-updated')?.(userRegion);
     expect(changed).toHaveBeenLastCalledWith({ startMs: 999, endMs: 1_000 });
+
+    adapter.destroy();
   });
 
   it('keeps WaveSurfer renderer-only and applies pending playhead and zoom after ready', () => {
@@ -160,6 +179,8 @@ describe('createWaveformAdapter', () => {
     expect(fixture.wave.zoom).toHaveBeenCalledWith(250);
     adapter.setPlayhead(2_000);
     expect(fixture.renderer.renderProgress).toHaveBeenLastCalledWith(1, false);
+
+    adapter.destroy();
   });
 
   it('does not stretch a capped sub-second waveform beyond the shared duration width', () => {
@@ -178,10 +199,80 @@ describe('createWaveformAdapter', () => {
     expect(fixture.wave.zoom).toHaveBeenCalledWith(1_000);
     expect(fixture.regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({ start: 0.05, end: 0.2 }));
     expect(fixture.renderer.renderProgress).toHaveBeenCalledWith(1, false);
+
+    adapter.destroy();
   });
 
-  it('stops drag selection, unsubscribes listeners, and destroys only once', () => {
+  it('resolves semantic palette tokens when WaveSurfer and Regions are created', () => {
+    const fixture = createDouble();
+    const container = document.body.appendChild(document.createElement('div'));
+    const tokens: PaletteTokens = {
+      '--color-waveform': '#101112',
+      '--color-waveform-active': '#202122',
+      '--color-playhead': '#303132',
+      '--color-selection-region': 'rgb(40 41 42 / .28)'
+    };
+    const computedStyle = mockPaletteTokens(container, tokens);
+    const adapter = createWaveformAdapter(container, peaks, vi.fn(), fixture.factory);
+
+    expect(fixture.factoryOptions).toMatchObject({
+      waveColor: '#101112',
+      progressColor: '#202122',
+      cursorColor: '#303132'
+    });
+    adapter.setSelection({ startMs: 100, endMs: 200 });
+    fixture.waveListeners.get('ready')?.();
+    expect(fixture.regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({
+      color: 'rgb(40 41 42 / .28)'
+    }));
+
+    adapter.destroy();
+    computedStyle.mockRestore();
+    container.remove();
+  });
+
+  it('updates WaveSurfer and the existing region on live palette changes without recreating state', async () => {
+    const fixture = createDouble();
+    const container = document.body.appendChild(document.createElement('div'));
+    const tokens: PaletteTokens = {
+      '--color-waveform': '#111111',
+      '--color-waveform-active': '#222222',
+      '--color-playhead': '#333333',
+      '--color-selection-region': 'rgb(44 44 44 / .28)'
+    };
+    const computedStyle = mockPaletteTokens(container, tokens);
+    const adapter = createWaveformAdapter(container, peaks, vi.fn(), fixture.factory);
+    adapter.setSelection({ startMs: 125, endMs: 375 });
+    fixture.waveListeners.get('ready')?.();
+    const canonical = fixture.regions.addRegion.mock.results[0]?.value as RegionDouble;
+
+    tokens['--color-waveform'] = '#aaaaaa';
+    tokens['--color-waveform-active'] = '#bbbbbb';
+    tokens['--color-playhead'] = '#cccccc';
+    tokens['--color-selection-region'] = 'rgb(221 221 221 / .34)';
+    document.documentElement.dataset.palette = 'arctic-steel';
+
+    await vi.waitFor(() => expect(fixture.wave.setOptions).toHaveBeenLastCalledWith({
+      waveColor: '#aaaaaa',
+      progressColor: '#bbbbbb',
+      cursorColor: '#cccccc'
+    }));
+    expect(canonical.setOptions).toHaveBeenLastCalledWith({ color: 'rgb(221 221 221 / .34)' });
+    expect(fixture.factory).toHaveBeenCalledOnce();
+    expect(fixture.wave.registerPlugin).toHaveBeenCalledOnce();
+    expect(fixture.regions.addRegion).toHaveBeenCalledOnce();
+    expect(fixture.regions.clearRegions).not.toHaveBeenCalled();
+    expect(canonical).toMatchObject({ start: 0.125, end: 0.375 });
+
+    adapter.destroy();
+    computedStyle.mockRestore();
+    container.remove();
+    delete document.documentElement.dataset.palette;
+  });
+
+  it('disconnects palette observation, stops listeners, and destroys only once', () => {
     const { disposers, regions, wave } = createDouble();
+    const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
     const adapter = createWaveformAdapter(document.createElement('div'), peaks, vi.fn(), () => wave as never);
     const stopDrag = regions.enableDragSelection.mock.results[0]?.value as ReturnType<typeof vi.fn>;
 
@@ -193,6 +284,7 @@ describe('createWaveformAdapter', () => {
     expect(disposers[1]).toHaveBeenCalledOnce();
     expect(disposers[2]).toHaveBeenCalledOnce();
     expect(disposers[3]).toHaveBeenCalledOnce();
+    expect(disconnect).toHaveBeenCalledOnce();
     expect(wave.destroy).toHaveBeenCalledOnce();
   });
 });

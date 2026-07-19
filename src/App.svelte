@@ -25,7 +25,7 @@
   import { formatUnknownError } from './lib/errors';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
-  import { loadPalette, persistPalette, type PaletteId } from './lib/theme/palette';
+  import { getBrowserStorage, loadPalette, persistPalette, type PaletteId } from './lib/theme/palette';
 
   interface PickerSet {
     audio(): Promise<string | null>;
@@ -81,7 +81,7 @@
   let transitionBusy = $state(false);
   let settingsBusy = $state(false);
   let settingsOpen = $state(false);
-  let palette = $state<PaletteId>(loadPalette(localStorage));
+  let palette = $state<PaletteId>(loadPalette(getBrowserStorage()));
   let multilinePolicyMutation: Promise<boolean> | null = null;
   let closePromise: Promise<void> | null = null;
   let cleanupRequested = false;

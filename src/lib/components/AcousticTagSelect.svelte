@@ -178,6 +178,12 @@
             tabindex="-1"
             on:click={() => toggleTag(tag.id)}
           >
+            <span
+              class="tag-color-cue"
+              data-testid={`acoustic-tag-cue-${tag.id}`}
+              data-color-slot={stableColorSlot(tag.id, 5)}
+              aria-hidden="true"
+            ></span>
             <span class="tag-check" aria-hidden="true">{selected ? '\u2713' : ''}</span>
             <span>{tag.label}</span>
           </button>

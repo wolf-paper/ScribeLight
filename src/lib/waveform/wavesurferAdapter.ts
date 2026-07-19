@@ -17,12 +17,25 @@ export type WaveformAdapterFactory = (
   onchange: (selection: Selection) => void
 ) => WaveformAdapter;
 
-const regionOptions = {
-  color: 'rgba(104, 164, 255, .28)',
-  drag: true,
-  resize: true
-};
 const canonicalRegionId = 'lightscribe-canonical-selection';
+
+interface WaveformPalette {
+  wave: string;
+  progress: string;
+  cursor: string;
+  selection: string;
+}
+
+function resolvePalette(container: HTMLElement): WaveformPalette {
+  const style = container.ownerDocument.defaultView?.getComputedStyle(container) ?? getComputedStyle(container);
+  const token = (name: string): string => style.getPropertyValue(name).trim() || `var(${name})`;
+  return {
+    wave: token('--color-waveform'),
+    progress: token('--color-waveform-active'),
+    cursor: token('--color-playhead'),
+    selection: token('--color-selection-region')
+  };
+}
 
 function clamp(value: number, maximum: number): number {
   return Math.min(Math.max(value, 0), maximum);
@@ -51,14 +64,16 @@ export function createWaveformAdapter(
   onchange: (selection: Selection) => void,
   factory: WaveformFactory = WaveSurfer.create
 ): WaveformAdapter {
+  const initialPalette = resolvePalette(container);
   const wave = factory({
     container,
     peaks: peaks.channels,
     duration: peaks.durationMs / 1_000,
     interact: false,
     dragToSeek: false,
-    waveColor: '#66758a',
-    progressColor: '#8ba8d8',
+    waveColor: initialPalette.wave,
+    progressColor: initialPalette.progress,
+    cursorColor: initialPalette.cursor,
     cursorWidth: 0,
     normalize: true,
     fillParent: false
@@ -71,7 +86,37 @@ export function createWaveformAdapter(
   let ready = false;
   let syncing = false;
   let destroyed = false;
+  const regionOptions = {
+    color: initialPalette.selection,
+    drag: true,
+    resize: true
+  };
   const stopDrag = regions.enableDragSelection(regionOptions);
+
+  const applyPalette = (): void => {
+    if (destroyed) return;
+    const palette = resolvePalette(container);
+    regionOptions.color = palette.selection;
+    wave.setOptions({
+      waveColor: palette.wave,
+      progressColor: palette.progress,
+      cursorColor: palette.cursor
+    });
+    if (!region) return;
+    syncing = true;
+    try {
+      region.setOptions({ color: palette.selection });
+    } finally {
+      syncing = false;
+    }
+  };
+  const paletteObserver = typeof MutationObserver === 'undefined'
+    ? null
+    : new MutationObserver(applyPalette);
+  paletteObserver?.observe(container.ownerDocument.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-palette']
+  });
 
   const applySelection = (): void => {
     if (!ready || destroyed) return;
@@ -174,6 +219,7 @@ export function createWaveformAdapter(
       stopCreated();
       stopUpdated();
       stopReady();
+      paletteObserver?.disconnect();
       wave.destroy();
     }
   };
