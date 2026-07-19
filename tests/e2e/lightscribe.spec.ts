@@ -1,0 +1,134 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const fixtureUrl = (story: string, reset = false) =>
+  `/?fixture=annotation-audio-test.wav&case=${encodeURIComponent(story)}${reset ? '&reset=1' : ''}`;
+
+async function openFixture(page: Page, story: string, reset = true): Promise<void> {
+  await page.goto(fixtureUrl(story, reset));
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__?: { marker: string };
+    }
+  ).__LIGHTSCRIBE_TEST__?.marker)).toBe('LIGHTSCRIBE_BROWSER_FAKE_V1');
+  await page.getByRole('button', { name: 'Open audio' }).click();
+  await expect(page.getByLabel('Audio waveform')).toBeVisible();
+}
+
+async function timelineMetrics(page: Page, pointerX: number) {
+  return page.getByTestId('timeline-viewport').evaluate((viewport, x) => {
+    const content = viewport.querySelector<HTMLElement>('[data-testid="timeline-content"]');
+    if (!content) throw new Error('timeline content is missing');
+    const width = content.getBoundingClientRect().width;
+    return {
+      width,
+      scrollLeft: viewport.scrollLeft,
+      anchorMs: (viewport.scrollLeft + x) / width * 10_000
+    };
+  }, pointerX);
+}
+
+test.use({ viewport: { width: 900, height: 900 } });
+
+test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 export story', async ({ page }) => {
+  await openFixture(page, 'complete-story');
+
+  const layers = await page.getByTestId('timeline-content').locator('[data-timeline-layer]').evaluateAll(
+    (elements) => elements.map((element) => element.getAttribute('data-timeline-layer'))
+  );
+  expect(layers).toEqual(['top-ruler', 'loop-selection', 'waveform', 'bottom-ruler']);
+
+  const pointerX = 360;
+  const viewport = page.getByTestId('timeline-viewport');
+  const viewportBounds = await viewport.boundingBox();
+  if (!viewportBounds) throw new Error('timeline viewport has no layout bounds');
+  const beforeZoom = await timelineMetrics(page, pointerX);
+  await viewport.dispatchEvent('wheel', {
+    ctrlKey: true,
+    deltaY: -100,
+    clientX: viewportBounds.x + pointerX
+  });
+  await expect.poll(async () => (await timelineMetrics(page, pointerX)).width).toBeGreaterThan(beforeZoom.width);
+  const zoomedIn = await timelineMetrics(page, pointerX);
+  expect(zoomedIn.anchorMs).toBeCloseTo(beforeZoom.anchorMs, 0);
+  await viewport.dispatchEvent('wheel', {
+    ctrlKey: true,
+    deltaY: 100,
+    clientX: viewportBounds.x + pointerX
+  });
+  await expect.poll(async () => (await timelineMetrics(page, pointerX)).width).toBeLessThan(zoomedIn.width);
+  const zoomedOut = await timelineMetrics(page, pointerX);
+  expect(zoomedOut.anchorMs).toBeCloseTo(beforeZoom.anchorMs, 0);
+
+  await page.keyboard.press('i');
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { snapshot: { positionMs: number } };
+    }
+  ).__LIGHTSCRIBE_TEST__.snapshot.positionMs)).toBe(1_000);
+  await page.keyboard.press('o');
+  await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
+  await expect(page.getByLabel('End milliseconds')).toHaveValue('1000');
+  await expect(page.getByRole('button', { name: 'Move loop selection' })).toBeVisible();
+  await page.getByRole('button', { name: 'Loop off' }).click();
+  await expect(page.getByRole('button', { name: 'Loop on' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Import TSV' }).click();
+  const annotations = page.getByLabel('Saved annotations');
+  await expect(annotations).toContainText('待って');
+  await expect(annotations).toContainText('はい');
+  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+
+  await page.getByLabel('Start milliseconds').fill('3000');
+  await page.getByLabel('End milliseconds').fill('4000');
+  const transcription = page.getByLabel('Transcription');
+  await transcription.fill('もう一度');
+  await transcription.press('Enter');
+  await expect(annotations.locator('.annotation-row')).toHaveCount(3);
+  await expect(annotations).toContainText('もう一度');
+
+  await transcription.fill('もう一度');
+  await transcription.press('Shift+Enter');
+  await expect(transcription).toHaveValue('もう一度\n');
+  await transcription.fill('もう一度\n続き');
+  await transcription.press('Enter');
+  await expect(annotations).toContainText('もう一度\n続き');
+  await expect(annotations.locator('.annotation-row')).toHaveCount(3);
+
+  const speaker = page.getByLabel('Rename speaker_1');
+  await speaker.fill('narrator');
+  await speaker.blur();
+  await expect(page.getByLabel('Rename narrator')).toHaveValue('narrator');
+  const tag = page.getByLabel('Rename quiet_dialogue');
+  await tag.fill('whisper');
+  await tag.blur();
+  await expect(page.getByLabel('Rename whisper')).toHaveValue('whisper');
+
+  await page.getByRole('button', { name: 'Export TSV' }).click();
+  await expect(page.getByRole('status', { name: 'Operation status' }))
+    .toContainText('Exported 3 annotations');
+  const exported = await page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { lastTsv: string };
+    }
+  ).__LIGHTSCRIBE_TEST__.lastTsv);
+  expect(exported).toMatch(/^start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n/);
+  expect(exported).toContain('待って\tintelligible\tnarrator\toverlap\thigh\twhisper');
+  expect(exported).toContain('はい\tintelligible\tspeaker_2\toverlap\tmedium\tbreath');
+  expect(exported).toContain('もう一度\\n続き');
+  expect(exported).not.toContain('\uFFFD');
+});
+
+test('recovers the saved project after a renderer reopen', async ({ page }) => {
+  await openFixture(page, 'recovery');
+  await page.getByLabel('Start milliseconds').fill('5000');
+  await page.getByLabel('End milliseconds').fill('6000');
+  await page.getByLabel('Transcription').fill('再開');
+  await page.getByLabel('Transcription').press('Enter');
+  await expect(page.getByLabel('Saved annotations')).toContainText('再開');
+
+  await page.goto(fixtureUrl('recovery'));
+  await page.getByRole('button', { name: 'Open audio' }).click();
+  await expect(page.getByLabel('Audio waveform')).toBeVisible();
+  await expect(page.getByLabel('Saved annotations')).toContainText('再開');
+});

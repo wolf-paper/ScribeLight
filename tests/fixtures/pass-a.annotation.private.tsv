@@ -1,0 +1,3 @@
+start_seconds	end_seconds	event_type	transcription	intelligibility	speaker	overlap	confidence	acoustic_tags	notes
+1.000	2.000	speech	待って	intelligible	speaker_1	overlap	high	quiet_dialogue	
+1.500	2.500	speech	はい	intelligible	speaker_2	overlap	medium	breath	

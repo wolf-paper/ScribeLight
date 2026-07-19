@@ -26,9 +26,13 @@ describe('main entry point', () => {
   it('mounts the Lightscribe shell into the app target', async () => {
     document.body.innerHTML = '<div id="app"></div>';
 
-    await import('./main');
+    const { default: app } = await import('./main');
+    await Promise.resolve(app);
 
     expect(screen.getByRole('heading', { name: 'Lightscribe' })).toBeInTheDocument();
-    expect(mount).toHaveBeenCalledWith(App, { target: document.getElementById('app') });
+    expect(mount).toHaveBeenCalledWith(App, {
+      target: document.getElementById('app'),
+      props: expect.objectContaining({ bridge: expect.any(Object), pickers: expect.any(Object) })
+    });
   });
 });
