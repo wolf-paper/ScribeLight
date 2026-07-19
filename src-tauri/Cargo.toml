@@ -29,6 +29,8 @@ csv = "1.4.0"
 tauri-plugin-dialog = "2.7.2"
 symphonia = { version = "0.6", default-features = false, features = ["wav", "pcm", "mpa"] }
 rtrb = "0.3.4"
+cpal = "0.17"
+crossbeam-channel = "0.5.16"
 
 [dev-dependencies]
 hound = "3.5.1"

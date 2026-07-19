@@ -182,6 +182,10 @@ impl AudioDecoder {
         &self.identity
     }
 
+    pub fn total_frames(&self) -> u64 {
+        self.total_frames
+    }
+
     pub fn verify_duration_to_end(&mut self) -> Result<(), AppError> {
         while self.decode_next()?.is_some() {}
         Ok(())

@@ -20,6 +20,8 @@ pub struct RenderState {
     pub playing: AtomicBool,
     pub volume_bits: AtomicU32,
     pub underruns: AtomicU64,
+    /// Set by CPAL's error callback using a single bounded atomic store.
+    pub stream_error: AtomicBool,
 }
 
 impl RenderState {
@@ -30,6 +32,7 @@ impl RenderState {
             playing: AtomicBool::new(false),
             volume_bits: AtomicU32::new(1.0_f32.to_bits()),
             underruns: AtomicU64::new(0),
+            stream_error: AtomicBool::new(false),
         }
     }
 

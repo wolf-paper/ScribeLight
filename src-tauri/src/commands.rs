@@ -1,10 +1,11 @@
 use crate::{
     audio::{
         decoder::{metadata_modified_ms, AudioDecoder},
+        engine::AudioEngine,
         peaks,
     },
     error::AppError,
-    model::{AudioIdentity, MultilinePolicy, PeakData, Project},
+    model::{AudioIdentity, MultilinePolicy, PeakData, PlaybackSnapshot, Project, Selection},
     persistence,
     tsv::{self, ImportedTsv},
 };
@@ -309,4 +310,82 @@ pub async fn analyze_audio(
 #[tauri::command]
 pub fn cancel_analysis(state: State<'_, AnalysisState>) -> Result<(), AppError> {
     state.cancel()
+}
+
+#[tauri::command]
+pub fn audio_open(
+    state: State<'_, Mutex<AudioEngine>>,
+    path: String,
+) -> Result<AudioIdentity, AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .open(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn audio_play(state: State<'_, Mutex<AudioEngine>>) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .play()
+}
+
+#[tauri::command]
+pub fn audio_pause(state: State<'_, Mutex<AudioEngine>>) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .pause()
+}
+
+#[tauri::command]
+pub fn audio_seek(state: State<'_, Mutex<AudioEngine>>, milliseconds: u64) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .seek_ms(milliseconds)
+}
+
+#[tauri::command]
+pub fn audio_set_loop(
+    state: State<'_, Mutex<AudioEngine>>,
+    selection: Selection,
+) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .set_loop_ms(Some(selection))
+}
+
+#[tauri::command]
+pub fn audio_clear_loop(state: State<'_, Mutex<AudioEngine>>) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .set_loop_ms(None)
+}
+
+#[tauri::command]
+pub fn audio_set_volume(state: State<'_, Mutex<AudioEngine>>, volume: f32) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .set_volume(volume)
+}
+
+#[tauri::command]
+pub fn audio_snapshot(state: State<'_, Mutex<AudioEngine>>) -> Result<PlaybackSnapshot, AppError> {
+    Ok(state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .snapshot())
+}
+
+#[tauri::command]
+pub fn audio_close(state: State<'_, Mutex<AudioEngine>>) -> Result<(), AppError> {
+    state
+        .lock()
+        .map_err(|_| AppError::Audio("Playback engine lock poisoned".to_owned()))?
+        .close()
 }

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { AudioIdentity, MultilinePolicy, Project } from '../domain/types';
+import type { AudioIdentity, MultilinePolicy, Project, Selection } from '../domain/types';
 
 export interface PeakData {
   totalFrames: number;
@@ -13,6 +13,15 @@ export interface PeakData {
 export interface AnalysisProgress {
   processedMs: number;
   durationMs: number;
+}
+
+export interface PlaybackSnapshot {
+  state: 'empty' | 'paused' | 'playing' | { error: string };
+  positionMs: number;
+  durationMs: number;
+  loopRange: Selection | null;
+  volume: number;
+  underruns: number;
 }
 
 export interface ImportedAnnotation {
@@ -43,6 +52,15 @@ export interface NativeBridge {
   analyzeAudio(path: string): Promise<PeakData>;
   cancelAnalysis(): Promise<void>;
   onAnalysisProgress(handler: (progress: AnalysisProgress) => void): Promise<() => void>;
+  audioOpen(path: string): Promise<AudioIdentity>;
+  audioPlay(): Promise<void>;
+  audioPause(): Promise<void>;
+  audioSeek(milliseconds: number): Promise<void>;
+  audioSetLoop(selection: Selection): Promise<void>;
+  audioClearLoop(): Promise<void>;
+  audioSetVolume(volume: number): Promise<void>;
+  audioSnapshot(): Promise<PlaybackSnapshot>;
+  audioClose(): Promise<void>;
 }
 
 export const tauriBridge: NativeBridge = {
@@ -54,5 +72,14 @@ export const tauriBridge: NativeBridge = {
   analyzeAudio: (path) => invoke('analyze_audio', { path }),
   cancelAnalysis: () => invoke('cancel_analysis'),
   onAnalysisProgress: async (handler) =>
-    listen<AnalysisProgress>('analysis-progress', (event) => handler(event.payload))
+    listen<AnalysisProgress>('analysis-progress', (event) => handler(event.payload)),
+  audioOpen: (path) => invoke('audio_open', { path }),
+  audioPlay: () => invoke('audio_play'),
+  audioPause: () => invoke('audio_pause'),
+  audioSeek: (milliseconds) => invoke('audio_seek', { milliseconds }),
+  audioSetLoop: (selection) => invoke('audio_set_loop', { selection }),
+  audioClearLoop: () => invoke('audio_clear_loop'),
+  audioSetVolume: (volume) => invoke('audio_set_volume', { volume }),
+  audioSnapshot: () => invoke('audio_snapshot'),
+  audioClose: () => invoke('audio_close')
 };

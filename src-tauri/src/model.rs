@@ -36,6 +36,26 @@ pub struct Selection {
     pub end_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackState {
+    Empty,
+    Paused,
+    Playing,
+    Error(String),
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSnapshot {
+    pub state: PlaybackState,
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    pub loop_range: Option<Selection>,
+    pub volume: f32,
+    pub underruns: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LabelDefinition {
     pub id: String,
