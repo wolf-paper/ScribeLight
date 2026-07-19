@@ -71,6 +71,7 @@ pub fn analyze_decoder(
         flush_bucket(&mut output, &mut minimum, &mut maximum);
     }
     Ok(PeakData {
+        total_frames: processed_frames,
         duration_ms: identity.duration_ms,
         sample_rate: identity.sample_rate,
         frames_per_peak,
@@ -114,13 +115,11 @@ pub fn read_cache(
 
 fn validate_cache(peaks: &PeakData, identity: &AudioIdentity) -> Result<(), AppError> {
     let expected_fpp = (identity.sample_rate / 100).max(1);
-    let frames = identity
-        .duration_ms
-        .saturating_mul(u64::from(identity.sample_rate))
-        / 1_000;
-    let expected_pairs = (frames as usize).div_ceil(expected_fpp as usize);
+    let expected_pairs = (peaks.total_frames as usize).div_ceil(expected_fpp as usize);
     let valid = peaks.duration_ms == identity.duration_ms
         && peaks.sample_rate == identity.sample_rate
+        && peaks.total_frames > 0
+        && peaks.total_frames <= u64::from(identity.sample_rate) * 30 * 60
         && peaks.frames_per_peak == expected_fpp
         && peaks.channels.len() == usize::from(identity.channels)
         && peaks.channels.iter().all(|channel| {
@@ -262,6 +261,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let identity = AudioDecoder::open(&source).unwrap().identity().clone();
         let invalid = PeakData {
+            total_frames: 1,
             duration_ms: identity.duration_ms + 1,
             sample_rate: identity.sample_rate,
             frames_per_peak: 0,
@@ -285,6 +285,7 @@ mod tests {
         let identity = AudioDecoder::open(&source).unwrap().identity().clone();
         std::fs::create_dir_all(cache.path()).unwrap();
         let valid = PeakData {
+            total_frames: 100,
             duration_ms: identity.duration_ms,
             sample_rate: identity.sample_rate,
             frames_per_peak: 10,

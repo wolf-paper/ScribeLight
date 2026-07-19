@@ -14,6 +14,7 @@ pub struct AudioIdentity {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PeakData {
+    pub total_frames: u64,
     pub duration_ms: u64,
     pub sample_rate: u32,
     pub frames_per_peak: u32,

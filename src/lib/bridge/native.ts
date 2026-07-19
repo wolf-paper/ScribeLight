@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { AudioIdentity, MultilinePolicy, Project } from '../domain/types';
 
 export interface PeakData {
+  totalFrames: number;
   durationMs: number;
   sampleRate: number;
   framesPerPeak: number;

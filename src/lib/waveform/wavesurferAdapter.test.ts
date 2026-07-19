@@ -3,6 +3,7 @@ import { createWaveformAdapter } from './wavesurferAdapter';
 import type { PeakData } from '../bridge/native';
 
 const peaks: PeakData = {
+  totalFrames: 48_000,
   durationMs: 1_000,
   sampleRate: 1_000,
   framesPerPeak: 10,

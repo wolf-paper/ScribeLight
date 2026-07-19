@@ -4,6 +4,7 @@ import WaveformView from './WaveformView.svelte';
 import type { PeakData } from '../bridge/native';
 
 const initialPeaks: PeakData = {
+  totalFrames: 48_000,
   durationMs: 1_000,
   sampleRate: 1_000,
   framesPerPeak: 10,
