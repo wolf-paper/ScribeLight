@@ -1,14 +1,18 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import type { PeakData } from '../bridge/native';
   import type { Selection, TimeDisplayFormat } from '../domain/types';
   import { timelineContentWidth, zoomAtPointer } from '../domain/timeline';
   import LoopSelectionBar from './LoopSelectionBar.svelte';
   import TimeRuler from './TimeRuler.svelte';
+  import WaveformView from './WaveformView.svelte';
 
   export let durationMs: number;
   export let format: TimeDisplayFormat;
   export let selection: Selection | null;
   export let onchange: (selection: Selection) => void;
+  export let peaks: PeakData | null = null;
+  export let playheadMs = 0;
 
   let viewport: HTMLDivElement;
   let pixelsPerSecond = 100;
@@ -80,7 +84,11 @@
   <div class="timeline-content" data-testid="timeline-content" style:width={`${contentWidth}px`}>
     <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="top-ruler" />
     <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
-    <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}><slot name="waveform" /></div>
+    <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
+      {#if peaks}
+        <WaveformView {peaks} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
+      {/if}
+    </div>
     <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />
   </div>
 </div>

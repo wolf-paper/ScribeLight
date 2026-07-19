@@ -1,6 +1,18 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { MultilinePolicy, Project } from '../domain/types';
 
+export interface PeakData {
+  durationMs: number;
+  sampleRate: number;
+  framesPerPeak: number;
+  channels: number[][];
+}
+
+export interface AnalysisProgress {
+  processedMs: number;
+  durationMs: number;
+}
+
 export interface ImportedAnnotation {
   startMs: number;
   endMs: number;
