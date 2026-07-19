@@ -63,7 +63,10 @@ describe('AnnotationTable', () => {
     expect(screen.getAllByText('Partially intelligible').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Unintelligible').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Not applicable').length).toBeGreaterThan(0);
-    expect(screen.getAllByLabelText('Highly intelligible status')[0]).toHaveTextContent('Highly intelligible');
+    expect(screen.getAllByLabelText('Highly intelligible status')[0]).toHaveTextContent('✓ Highly intelligible');
+    expect(screen.getAllByLabelText('Partially intelligible status')[0]).toHaveTextContent('◒ Partially intelligible');
+    expect(screen.getAllByLabelText('Unintelligible status')[0]).toHaveTextContent('! Unintelligible');
+    expect(screen.getAllByLabelText('Not applicable status')[0]).toHaveTextContent('– Not applicable');
     expect(screen.getByRole('button', { name: 'Edit annotation First note' })).toHaveAttribute('aria-current', 'true');
 
     await view.rerender({
