@@ -41,6 +41,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   private lifecycle = 0;
   private refreshSequence = 0;
   private appliedRefresh = 0;
+  private closed = false;
   private closePromise: Promise<void> | null = null;
   private desiredLoop: Selection | null | undefined;
   private loopWorker: Promise<void> | null = null;
@@ -49,7 +50,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   constructor(private readonly bridge: AudioBridge) {}
 
   startPolling(): void {
-    if (this.timer) return;
+    if (this.closed || this.timer) return;
     this.timer = setInterval(() => void this.poll(), 33);
   }
 
@@ -59,6 +60,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   }
 
   async refresh(): Promise<void> {
+    this.assertOpen();
     const lifecycle = this.lifecycle;
     const sequence = ++this.refreshSequence;
     try {
@@ -88,6 +90,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   }
 
   setLoop(selection: Selection | null): Promise<void> {
+    if (this.closed) return Promise.reject(new Error('Audio session is closed'));
     if (selection && (!Number.isInteger(selection.startMs) || !Number.isInteger(selection.endMs)
       || selection.startMs < 0 || selection.endMs <= selection.startMs)) {
       return Promise.reject(new Error('Loop boundaries must be increasing integer milliseconds'));
@@ -104,6 +107,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
+    this.closed = true;
     this.stopPolling();
     this.lifecycle += 1;
     this.desiredLoop = undefined;
@@ -111,7 +115,6 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
       try {
         await this.bridge.audioClose();
       } catch (error) {
-        this.setError(error);
         throw error;
       } finally {
         this.state.set(emptySnapshot());
@@ -133,10 +136,14 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   }
 
   private async command(action: () => Promise<void>): Promise<void> {
+    this.assertOpen();
+    const lifecycle = this.lifecycle;
     try {
       await action();
+      if (this.closed || lifecycle !== this.lifecycle) return;
       await this.refresh();
     } catch (error) {
+      if (this.closed || lifecycle !== this.lifecycle) return;
       this.setError(error);
       throw error;
     }
@@ -145,7 +152,7 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   private async applyDesiredLoops(): Promise<void> {
     const lifecycle = this.lifecycle;
     try {
-      while (this.desiredLoop !== undefined && lifecycle === this.lifecycle) {
+      while (!this.closed && this.desiredLoop !== undefined && lifecycle === this.lifecycle) {
         const next = this.desiredLoop;
         this.desiredLoop = undefined;
         try {
@@ -156,14 +163,19 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
           throw error;
         }
       }
-      if (lifecycle === this.lifecycle) await this.refresh();
+      if (!this.closed && lifecycle === this.lifecycle) await this.refresh();
     } finally {
       this.loopWorker = null;
-      if (this.desiredLoop !== undefined && lifecycle === this.lifecycle) this.loopWorker = this.applyDesiredLoops();
+      if (!this.closed && this.desiredLoop !== undefined && lifecycle === this.lifecycle) this.loopWorker = this.applyDesiredLoops();
     }
   }
 
   private setError(error: unknown): void {
+    if (this.closed) return;
     this.state.update((value) => ({ ...value, state: { error: errorText(error) } }));
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error('Audio session is closed');
   }
 }

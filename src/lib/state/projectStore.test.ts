@@ -70,7 +70,7 @@ describe('ProjectStore', () => {
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
     store.patchDraft({ notes: 'close safely' });
-    await store.flush();
+    await expect(store.flush()).resolves.toBe(true);
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
     vi.advanceTimersByTime(350);
@@ -106,9 +106,9 @@ describe('ProjectStore', () => {
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
     store.patchDraft({ notes: 'failed save' });
-    await store.flush();
+    await expect(store.flush()).resolves.toBe(false);
     store.patchDraft({ notes: 'later save' });
-    await store.flush();
+    await expect(store.flush()).resolves.toBe(true);
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
     expect(get(store)).toMatchObject({
@@ -195,11 +195,56 @@ describe('ProjectStore', () => {
     store.open(createProject(audio));
     store.patchDraft({ notes: 'do not lose me' });
 
-    await store.flush();
+    await expect(store.flush()).resolves.toBe(false);
 
     expect(get(store)).toMatchObject({
       project: { draft: { notes: 'do not lose me' } },
       saveError: 'Error: disk full'
     });
+  });
+
+  it('does not publish a committed mutation when its atomic save fails', async () => {
+    bridge.saveProject.mockRejectedValueOnce(new Error('disk full'));
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+
+    await expect(store.mutateProject((project) => ({
+      ...project,
+      displayFormat: 'clock'
+    }))).resolves.toBe(false);
+
+    expect(get(store)).toMatchObject({
+      project: { displayFormat: 'seconds' },
+      saveError: 'Error: disk full'
+    });
+  });
+
+  it('serializes committed mutations so each derives from the latest published project', async () => {
+    const firstSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => firstSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+
+    const first = store.mutateProject((project) => ({ ...project, draft: { ...project.draft, notes: 'first' } }));
+    const second = store.mutateProject((project) => ({ ...project, draft: { ...project.draft, notes: `${project.draft.notes} second` } }));
+    await Promise.resolve();
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+    firstSave.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([true, true]);
+    expect(get(store).project!.draft.notes).toBe('first second');
+    expect(bridge.saveProject.mock.calls[1][0].draft.notes).toBe('first second');
+  });
+
+  it('retains failed-save evidence if a caller opens another project', async () => {
+    bridge.saveProject.mockRejectedValueOnce(new Error('old project is not writable'));
+    const store = new ProjectStore(bridge);
+    store.open(createProject(audio));
+    store.patchDraft({ notes: 'unsaved old draft' });
+    await expect(store.flush()).resolves.toBe(false);
+
+    store.open(createProject({ ...audio, canonicalPath: 'b.wav' }));
+
+    expect(get(store).saveError).toBe('Error: old project is not writable');
   });
 });

@@ -136,4 +136,43 @@ describe('AudioSession', () => {
     await expect(session.refresh()).rejects.toThrow('invalid playback snapshot');
     expect(get(session).state).toEqual({ error: expect.stringContaining('invalid playback snapshot') });
   });
+
+  it('is terminal after close and rejects every later operation without polling or native calls', async () => {
+    const session = new AudioSession(bridge);
+    await session.close();
+    vi.clearAllMocks();
+
+    session.startPolling();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(session.refresh()).rejects.toThrow('closed');
+    await expect(session.play()).rejects.toThrow('closed');
+    await expect(session.pause()).rejects.toThrow('closed');
+    await expect(session.seek(1)).rejects.toThrow('closed');
+    await expect(session.setLoop({ startMs: 1, endMs: 2 })).rejects.toThrow('closed');
+    await expect(session.setVolume(0.5)).rejects.toThrow('closed');
+    await session.close();
+
+    expect(bridge.audioSnapshot).not.toHaveBeenCalled();
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+    expect(bridge.audioPause).not.toHaveBeenCalled();
+    expect(bridge.audioSeek).not.toHaveBeenCalled();
+    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
+    expect(bridge.audioSetVolume).not.toHaveBeenCalled();
+    expect(bridge.audioClose).not.toHaveBeenCalled();
+    expect(get(session)).toEqual({ state: 'empty', positionMs: 0, durationMs: 0, loopRange: null, volume: 1, underruns: 0 });
+  });
+
+  it('does not refresh or resurrect state when a command settles after close', async () => {
+    const pendingPlay = deferred<void>();
+    bridge.audioPlay.mockReturnValueOnce(pendingPlay.promise);
+    const session = new AudioSession(bridge);
+    const play = session.play();
+
+    await session.close();
+    pendingPlay.resolve();
+    await expect(play).resolves.toBeUndefined();
+
+    expect(bridge.audioSnapshot).not.toHaveBeenCalled();
+    expect(get(session).state).toBe('empty');
+  });
 });

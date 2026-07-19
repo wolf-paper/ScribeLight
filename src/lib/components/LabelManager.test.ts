@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { describe, expect, it, vi } from 'vitest';
 import { createProject } from '../domain/project';
@@ -17,14 +17,15 @@ describe('SpeakerManager', () => {
 
     await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'narrator' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add speaker' }));
+    await waitFor(() => expect(get(store).project!.speakers.at(-1)!.label).toBe('narrator'));
     const added = get(store).project!.speakers.at(-1)!;
     expect(added.label).toBe('narrator');
 
-    const rename = screen.getByLabelText('Rename narrator');
+    const rename = await screen.findByLabelText('Rename narrator');
     await fireEvent.input(rename, { target: { value: 'host' } });
     await fireEvent.blur(rename);
 
-    expect(get(store).project!.speakers.at(-1)).toEqual({ id: added.id, label: 'host' });
+    await waitFor(() => expect(get(store).project!.speakers.at(-1)).toEqual({ id: added.id, label: 'host' }));
     expect(saveProject).toHaveBeenLastCalledWith(expect.objectContaining({ speakers: expect.arrayContaining([{ id: added.id, label: 'host' }]) }));
   });
 
@@ -76,12 +77,13 @@ describe('AcousticTagManager', () => {
 
     await fireEvent.input(screen.getByLabelText('New acoustic tag'), { target: { value: 'whisper' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add acoustic tag' }));
+    await waitFor(() => expect(get(store).project!.acousticTags.at(-1)!.label).toBe('whisper'));
     const added = get(store).project!.acousticTags.at(-1)!;
-    const rename = screen.getByLabelText('Rename whisper');
+    const rename = await screen.findByLabelText('Rename whisper');
     await fireEvent.input(rename, { target: { value: 'aside' } });
     await fireEvent.blur(rename);
 
-    expect(get(store).project!.acousticTags.at(-1)).toEqual({ id: added.id, label: 'aside' });
+    await waitFor(() => expect(get(store).project!.acousticTags.at(-1)).toEqual({ id: added.id, label: 'aside' }));
   });
 
   it('only removes a referenced tag after confirmation and clears every reference', async () => {

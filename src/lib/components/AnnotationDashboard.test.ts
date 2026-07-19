@@ -59,7 +59,7 @@ describe('AnnotationDashboard', () => {
   it('updates, clears, and keeps validation feedback visible', async () => {
     const store = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Add annotation' }));
-    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '10' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Update annotation' }));
     expect(screen.getByRole('alert')).toHaveTextContent('Correct the highlighted annotation fields.');

@@ -40,6 +40,7 @@ describe('ClipToolbar', () => {
     expect(screen.getByRole('button', { name: 'Loop off' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Export TSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Show decimal seconds' })).toBeDisabled();
     expect(screen.getByRole('progressbar', { name: 'Waveform analysis progress' })).toHaveAttribute('aria-valuenow', '0');
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel analysis' }));
     expect(handlers.cancelAnalysis).toHaveBeenCalledTimes(1);

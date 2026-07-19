@@ -5,6 +5,11 @@ fn default_capability_grants_only_the_narrow_dialog_permissions() {
 
     assert_eq!(
         capability["permissions"],
-        serde_json::json!(["core:default", "dialog:allow-open", "dialog:allow-save"])
+        serde_json::json!([
+            "core:default",
+            "core:window:allow-destroy",
+            "dialog:allow-open",
+            "dialog:allow-save"
+        ])
     );
 }

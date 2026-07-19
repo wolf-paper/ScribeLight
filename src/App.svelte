@@ -18,7 +18,7 @@
   import TimelineWorkspace from './lib/components/TimelineWorkspace.svelte';
   import { mergeImportedTsv } from './lib/domain/importTsv';
   import { createProject } from './lib/domain/project';
-  import type { AnnotationDraft, Project, Selection } from './lib/domain/types';
+  import type { AnnotationDraft, AudioIdentity, Project, Selection } from './lib/domain/types';
   import { validateDraft } from './lib/domain/validation';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
@@ -72,6 +72,8 @@
   let latestStartedPicker = 0;
   let operationGeneration = 0;
   let activeAnalysisGeneration: number | null = null;
+  let latestQueuedOpenGeneration = 0;
+  let audioOpenQueue: Promise<void> = Promise.resolve();
   let closePromise: Promise<void> | null = null;
   let cleanupRequested = false;
   let analysisUnlisten: (() => void) | null = null;
@@ -137,8 +139,60 @@
     return 'The operation failed';
   }
 
+  function sameAudioIdentity(left: AudioIdentity, right: AudioIdentity): boolean {
+    return left.canonicalPath === right.canonicalPath
+      && left.size === right.size
+      && left.modifiedMs === right.modifiedMs
+      && left.durationMs === right.durationMs
+      && left.sampleRate === right.sampleRate
+      && left.channels === right.channels;
+  }
+
+  function validatePeaks(value: PeakData, identity: AudioIdentity): void {
+    const expectedFramesPerPeak = Math.max(1, Math.floor(identity.sampleRate / 100));
+    const expectedPairs = Math.ceil(value.totalFrames / expectedFramesPerPeak);
+    const valid = Number.isInteger(value.totalFrames)
+      && value.totalFrames > 0
+      && value.totalFrames <= identity.sampleRate * 30 * 60
+      && value.durationMs === identity.durationMs
+      && value.sampleRate === identity.sampleRate
+      && value.framesPerPeak === expectedFramesPerPeak
+      && value.channels.length === identity.channels
+      && value.channels.every((channel) => channel.length === expectedPairs * 2
+        && channel.every((sample) => Number.isFinite(sample) && sample >= -1 && sample <= 1));
+    if (!valid) throw new Error('Analyzed waveform data does not match the inspected audio');
+  }
+
   function isCurrent(generation: number): boolean {
     return generation === operationGeneration && !closePromise;
+  }
+
+  function queueNativeOpen(path: string, identity: AudioIdentity, generation: number): Promise<AudioIdentity | null> {
+    latestQueuedOpenGeneration = generation;
+    const operation = audioOpenQueue.then(async () => {
+      if (!isCurrent(generation)) {
+        if (latestQueuedOpenGeneration === generation) {
+          try { await bridge.audioClose(); } catch { /* A cancelled queued open must not leave an older queued side effect alive. */ }
+        }
+        return null;
+      }
+      const openedIdentity = await bridge.audioOpen(path);
+      if (!sameAudioIdentity(openedIdentity, identity)) {
+        if (isCurrent(generation) || latestQueuedOpenGeneration === generation) {
+          try { await bridge.audioClose(); } catch { /* Preserve the primary source-change error. */ }
+        }
+        throw new Error('Source audio changed while opening; retry the operation');
+      }
+      if (!isCurrent(generation)) {
+        if (latestQueuedOpenGeneration === generation) {
+          try { await bridge.audioClose(); } catch { /* A cancelled open must not keep mismatched playback alive. */ }
+        }
+        return null;
+      }
+      return openedIdentity;
+    });
+    audioOpenQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   function installDisposer(kind: 'analysis' | 'close', disposer: () => void): void {
@@ -257,9 +311,13 @@
       analysisProgress = { processedMs: 0, durationMs: identity.durationMs };
       const nextPeaks = await bridge.analyzeAudio(path);
       if (!isCurrent(generation)) return;
-      if (current) await projectStore.flush();
+      validatePeaks(nextPeaks, identity);
+      if (current && !await projectStore.flush()) {
+        throw new Error(get(projectStore).saveError ?? 'The current project could not be saved');
+      }
       if (!isCurrent(generation)) return;
-      await bridge.audioOpen(path);
+      const openedIdentity = await queueNativeOpen(path, identity, generation);
+      if (!openedIdentity) return;
       if (!isCurrent(generation)) return;
       projectStore.open(nextProject);
       peaks = nextPeaks;
@@ -355,7 +413,11 @@
 
   function globalKeydown(event: KeyboardEvent): void {
     const target = event.target instanceof Element ? event.target : null;
-    if (event.isComposing || target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+    const editable = target?.closest('[contenteditable]');
+    const editableValue = editable?.getAttribute('contenteditable')?.toLowerCase();
+    if (event.isComposing || target?.closest('input, textarea, select')
+      || (editable && editableValue !== 'false')
+      || (target instanceof HTMLElement && target.isContentEditable)) return;
     const current = get(projectStore).project;
     if (!current) return;
     const snapshot = get(audioSession);
@@ -395,11 +457,16 @@
   function requestClose(event: CloseRequestEvent): Promise<void> {
     if (closePromise) return closePromise;
     event.preventDefault();
-    closePromise = shutdown();
-    return closePromise;
+    const attempt = shutdown();
+    const shared = attempt.then(() => undefined);
+    closePromise = shared;
+    void attempt.then((completed) => {
+      if (!completed && closePromise === shared) closePromise = null;
+    });
+    return shared;
   }
 
-  async function shutdown(): Promise<void> {
+  async function shutdown(): Promise<boolean> {
     operationGeneration += 1;
     const hadAnalysis = activeAnalysisGeneration !== null;
     activeAnalysisGeneration = null;
@@ -407,10 +474,16 @@
     if (hadAnalysis) {
       try { await bridge.cancelAnalysis(); } catch (error) { persistentError = errorText(error); }
     }
-    try { await projectStore.flush(); } catch (error) { persistentError = errorText(error); }
+    let flushed = false;
+    try { flushed = await projectStore.flush(); } catch (error) { persistentError = errorText(error); }
+    if (!flushed) {
+      persistentError = get(projectStore).saveError ?? 'The current project could not be saved before closing';
+      return false;
+    }
     try { await audioSession.close(); } catch (error) { persistentError = errorText(error); }
     disposeListeners();
     try { await lifecycle.destroy(); } catch (error) { persistentError = errorText(error); }
+    return true;
   }
 
   const toolbarActions = {

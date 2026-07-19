@@ -9,7 +9,11 @@ export const fakeIdentity = (canonicalPath = 'clip.wav', durationMs = 1_000): Au
 });
 
 export const fakePeaks = (durationMs = 1_000): PeakData => ({
-  totalFrames: durationMs, durationMs, sampleRate: 1_000, framesPerPeak: 10, channels: [[0, 0.5, -0.5, 0]]
+  totalFrames: durationMs,
+  durationMs,
+  sampleRate: 1_000,
+  framesPerPeak: 10,
+  channels: [Array.from({ length: Math.ceil(durationMs / 10) * 2 }, (_, index) => index % 2 ? 0.5 : -0.5)]
 });
 
 type MockNativeBridge = { [Key in keyof NativeBridge]: Mock<NativeBridge[Key]> };

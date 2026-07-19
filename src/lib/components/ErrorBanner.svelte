@@ -8,7 +8,7 @@
 </script>
 
 {#if message}
-  <div class="error-banner" role="alert">
+  <div class="error-banner" role="alert" aria-label="Application error">
     <span>{message}</span>
     <button type="button" onclick={dismiss}>Dismiss</button>
   </div>

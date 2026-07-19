@@ -56,7 +56,7 @@
       oninput={(event) => actions.setVolume(+(event.currentTarget as HTMLInputElement).value)}
     />
   </label>
-  <button type="button" aria-label={format === 'seconds' ? 'Show clock time' : 'Show decimal seconds'} onclick={actions.toggleFormat}>
+  <button type="button" disabled={!filename} aria-label={format === 'seconds' ? 'Show clock time' : 'Show decimal seconds'} onclick={actions.toggleFormat}>
     {format === 'seconds' ? 'mm:ss.mmm' : 'seconds.mmm'}
   </button>
   <button type="button" disabled={!filename} onclick={actions.importTsv}>Import TSV</button>

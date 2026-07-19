@@ -71,20 +71,21 @@ describe('App', () => {
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 250 }));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'うん' } });
     await fireEvent.keyDown(screen.getByLabelText('Transcription'), { key: 'Enter' });
-    expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('うん');
+    await waitFor(() => expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('うん'));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'うん!' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Update annotation' }));
-    expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('うん!');
+    await waitFor(() => expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('うん!'));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(audio).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledTimes(2));
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     expect(await screen.findByText('imported')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
     expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
       annotations: expect.arrayContaining([expect.objectContaining({ transcription: 'うん!' }), expect.objectContaining({ transcription: 'imported' })])
     }));
-    expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations');
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations'));
   });
 
   it('preserves the old project, waveform, and native clip when preparing a replacement fails', async () => {
@@ -109,6 +110,46 @@ describe('App', () => {
     expect(bridge.audioOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('aborts replacement before native open when the old draft cannot be flushed', async () => {
+    const bridge = makeFakeBridge({ identity: fakeIdentity('old.wav') });
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+    await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'unsaved old draft' } });
+    bridge.saveProject.mockRejectedValueOnce(new Error('recovery disk is full'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent('recovery disk is full');
+    expect(screen.getByText('old.wav')).toBeInTheDocument();
+    expect(screen.getByLabelText('Notes')).toHaveValue('unsaved old draft');
+    expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Opened old.wav');
+    expect(bridge.audioOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the prior project and status when an imported project cannot be saved', async () => {
+    const bridge = makeFakeBridge({ imported: {
+      speakers: ['guest'], acousticTags: [], annotations: [{
+        startMs: 10, endMs: 20, eventType: 'speech', transcription: 'must not publish',
+        intelligibility: 'intelligible', speaker: 'guest', overlap: 'none', confidence: 'high',
+        acousticTags: [], notes: ''
+      }]
+    } });
+    renderApp({
+      bridge,
+      pickers: { audio: async () => 'clip.wav', tsv: async () => 'rows.tsv', exportTsv: async () => null }
+    });
+    await openClip();
+    bridge.saveProject.mockRejectedValueOnce(new Error('import destination is read-only'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent('import destination is read-only');
+    expect(screen.queryByText('must not publish')).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Opened clip.wav');
+  });
+
   it('requires explicit modified-recovery approval and refuses annotations outside the new duration', async () => {
     const restored = createProject(fakeIdentity('changed.wav', 2_000));
     restored.audioIdentity.size = 1;
@@ -131,6 +172,7 @@ describe('App', () => {
   it('cancels superseded analysis and ignores its late completion, progress, and error', async () => {
     const bridge = makeFakeBridge();
     bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    bridge.audioOpen.mockImplementation(async (path) => fakeIdentity(path));
     const oldAnalysis = deferred<PeakData>();
     const newAnalysis = deferred<PeakData>();
     bridge.analyzeAudio.mockImplementation((path) => path === 'old.wav' ? oldAnalysis.promise : newAnalysis.promise);
@@ -152,6 +194,56 @@ describe('App', () => {
     expect(bridge.audioOpen).toHaveBeenCalledTimes(1);
     expect(bridge.audioOpen).toHaveBeenCalledWith('new.wav');
     await waitFor(() => expect(screen.queryByRole('progressbar')).not.toBeInTheDocument());
+  });
+
+  it('serializes raced native opens so the newest operation is the final native and visible clip', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const firstOpen = deferred<ReturnType<typeof fakeIdentity>>();
+    const settled: string[] = [];
+    bridge.audioOpen.mockImplementation((path) => {
+      if (path === 'first.wav') return firstOpen.promise.then((identity) => { settled.push(path); return identity; });
+      settled.push(path);
+      return Promise.resolve(fakeIdentity(path));
+    });
+    const paths = ['first.wav', 'second.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledWith('first.wav'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.analyzeAudio).toHaveBeenCalledWith('second.wav'));
+    expect(bridge.audioOpen).toHaveBeenCalledTimes(1);
+
+    firstOpen.resolve(fakeIdentity('first.wav'));
+    await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText('second.wav')).toBeInTheDocument());
+    expect(bridge.audioOpen.mock.calls.map(([path]) => path)).toEqual(['first.wav', 'second.wav']);
+    expect(settled).toEqual(['first.wav', 'second.wav']);
+  });
+
+  it('rejects invalid peak geometry before native open and leaves the current UI untouched', async () => {
+    const bridge = makeFakeBridge();
+    bridge.analyzeAudio.mockResolvedValue({ ...fakePeaks(), framesPerPeak: 11 });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/waveform.*does not match/i);
+    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(bridge.audioOpen).not.toHaveBeenCalled();
+  });
+
+  it('rejects a changed native-open identity before publishing and closes mismatched playback', async () => {
+    const bridge = makeFakeBridge();
+    bridge.audioOpen.mockResolvedValue({ ...fakeIdentity(), size: 101 });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/source audio changed/i);
+    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(bridge.audioClose).toHaveBeenCalledTimes(1);
   });
 
   it('handles global shortcuts but ignores text controls and IME composition', async () => {
@@ -184,6 +276,27 @@ describe('App', () => {
     expect(bridge.audioPlay).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores shortcuts inside empty and plaintext-only contenteditable regions', async () => {
+    const bridge = makeFakeBridge();
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    const emptyEditable = document.createElement('div');
+    emptyEditable.setAttribute('contenteditable', '');
+    const plaintextEditable = document.createElement('div');
+    plaintextEditable.setAttribute('contenteditable', 'plaintext-only');
+    const child = document.createElement('span');
+    plaintextEditable.append(child);
+    document.body.append(emptyEditable, plaintextEditable);
+
+    await fireEvent.keyDown(emptyEditable, { code: 'Space', key: ' ' });
+    await fireEvent.keyDown(child, { code: 'Space', key: ' ' });
+
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+    expect(bridge.audioPause).not.toHaveBeenCalled();
+    emptyEditable.remove();
+    plaintextEditable.remove();
+  });
+
   it('flushes recovery and disposes listeners/audio exactly once on reentrant close', async () => {
     const bridge = makeFakeBridge();
     const close = makeFakeLifecycle();
@@ -206,5 +319,25 @@ describe('App', () => {
     expect(progressUnlisten).toHaveBeenCalledTimes(1);
     expect(close.closeUnlisten).toHaveBeenCalledTimes(1);
     expect(close.lifecycle.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the window and audio open when close recovery cannot be saved', async () => {
+    const bridge = makeFakeBridge();
+    const close = makeFakeLifecycle();
+    render(App, {
+      bridge, lifecycle: close.lifecycle,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav' }
+    });
+    await openClip();
+    await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'must survive close' } });
+    bridge.saveProject.mockRejectedValueOnce(new Error('cannot save recovery'));
+
+    const request = close.triggerClose();
+    await request.result;
+
+    expect(request.event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent('cannot save recovery');
+    expect(bridge.audioClose).not.toHaveBeenCalled();
+    expect(close.lifecycle.destroy).not.toHaveBeenCalled();
   });
 });
