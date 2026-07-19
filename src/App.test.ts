@@ -93,11 +93,61 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     expect(await screen.findByText('imported')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
-    expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
+    await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
       exportSettings: { multilinePolicy: 'space' },
       annotations: expect.arrayContaining([expect.objectContaining({ transcription: 'うん!' }), expect.objectContaining({ transcription: 'imported' })])
-    }));
+    })));
     await waitFor(() => expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations'));
+  });
+
+  it('waits for an immediate multiline policy save before exporting the authoritative project', async () => {
+    const policySave = deferred<void>();
+    const bridge = makeFakeBridge();
+    bridge.saveProject.mockImplementationOnce(() => policySave.promise).mockResolvedValue(undefined);
+    renderApp({
+      bridge,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav', exportTsv: async () => 'clip.tsv' }
+    });
+    await openClip();
+
+    const selector = screen.getByRole('combobox', { name: 'Multiline export policy' }) as HTMLSelectElement;
+    const exportButton = screen.getByRole('button', { name: 'Export TSV' });
+    selector.value = 'space';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    exportButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await Promise.resolve();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+    expect(bridge.writeTsv).not.toHaveBeenCalled();
+    policySave.resolve();
+
+    await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
+      exportSettings: { multilinePolicy: 'space' }
+    })));
+  });
+
+  it('waits for an immediate multiline policy save before importing with the authoritative policy', async () => {
+    const policySave = deferred<void>();
+    const bridge = makeFakeBridge();
+    bridge.saveProject.mockImplementationOnce(() => policySave.promise).mockResolvedValue(undefined);
+    renderApp({
+      bridge,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav', tsv: async () => 'rows.tsv' }
+    });
+    await openClip();
+
+    const selector = screen.getByRole('combobox', { name: 'Multiline export policy' }) as HTMLSelectElement;
+    const importButton = screen.getByRole('button', { name: 'Import TSV' });
+    selector.value = 'quoted';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    importButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await Promise.resolve();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+    expect(bridge.readTsv).not.toHaveBeenCalled();
+    policySave.resolve();
+
+    await waitFor(() => expect(bridge.readTsv).toHaveBeenCalledWith('rows.tsv', 'quoted'));
   });
 
   it('preserves the old project, waveform, and native clip when preparing a replacement fails', async () => {

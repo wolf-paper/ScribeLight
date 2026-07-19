@@ -385,6 +385,26 @@ mod tests {
     }
 
     #[test]
+    fn space_policy_normalizes_every_line_ending_through_export_and_parse() {
+        let mut project = Project::fixture("a.wav");
+        project.export_settings.multiline_policy = MultilinePolicy::Space;
+        project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
+        project.annotations[0].transcription = "first\r\nsecond\rthird\nfourth".into();
+        project.annotations[0].notes = "note one\r\nnote two".into();
+
+        let text = export_tsv(&project).unwrap();
+        let imported = parse_tsv(&text, MultilinePolicy::Space).unwrap();
+
+        assert!(!text.contains('\r'));
+        assert!(text.contains("first second third fourth"));
+        assert_eq!(
+            imported.annotations[0].transcription,
+            "first second third fourth"
+        );
+        assert_eq!(imported.annotations[0].notes, "note one note two");
+    }
+
+    #[test]
     fn exports_current_labels_in_chronological_order_and_uses_reserved_none() {
         let mut project = Project::fixture("a.wav");
         project.audio_identity.duration_ms = 3_000;

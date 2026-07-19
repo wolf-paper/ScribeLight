@@ -23,12 +23,13 @@
     volume?: number;
     analysisPercent?: number | null;
     busy?: boolean;
+    settingsBusy?: boolean;
     actions: Actions;
   }
 
   let {
     filename, playing, loopEnabled, canLoop, format, multilinePolicy, volume = 1,
-    analysisPercent = null, busy = false, actions
+    analysisPercent = null, busy = false, settingsBusy = false, actions
   }: Props = $props();
 </script>
 
@@ -66,7 +67,7 @@
     <span>Multiline export policy</span>
     <select
       value={multilinePolicy}
-      disabled={!filename || busy}
+      disabled={!filename || busy || settingsBusy}
       onchange={(event) => actions.setMultilinePolicy((event.currentTarget as HTMLSelectElement).value as MultilinePolicy)}
     >
       <option value="escape">Escape line breaks as \n</option>
@@ -74,8 +75,8 @@
       <option value="quoted">Preserve line breaks in quoted fields</option>
     </select>
   </label>
-  <button type="button" disabled={!filename || busy} onclick={actions.importTsv}>Import TSV</button>
-  <button type="button" disabled={!filename || busy} onclick={actions.exportTsv}>Export TSV</button>
+  <button type="button" disabled={!filename || busy || settingsBusy} onclick={actions.importTsv}>Import TSV</button>
+  <button type="button" disabled={!filename || busy || settingsBusy} onclick={actions.exportTsv}>Export TSV</button>
   {#if analysisPercent !== null}
     <progress
       aria-label="Waveform analysis progress"

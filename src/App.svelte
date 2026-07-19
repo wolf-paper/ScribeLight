@@ -76,6 +76,8 @@
   let audioOpenQueue: Promise<void> = Promise.resolve();
   let transitionOwner: number | null = null;
   let transitionBusy = $state(false);
+  let settingsBusy = $state(false);
+  let multilinePolicyMutation: Promise<boolean> | null = null;
   let closePromise: Promise<void> | null = null;
   let cleanupRequested = false;
   let analysisUnlisten: (() => void) | null = null;
@@ -441,12 +443,15 @@
 
   async function importTsv(): Promise<void> {
     if (transitionBusy || closePromise) return;
-    const current = get(projectStore).project;
-    if (!current) return;
     try {
+      if (!await waitForMultilinePolicy()) return;
+      if (transitionBusy || closePromise || !get(projectStore).project) return;
       const path = await pickers.tsv();
       if (!path) return;
+      if (!await waitForMultilinePolicy()) return;
       if (transitionBusy || closePromise) return;
+      const current = get(projectStore).project;
+      if (!current) return;
       const imported = await bridge.readTsv(path, current.exportSettings.multilinePolicy);
       if (transitionBusy || closePromise) return;
       const succeeded = await projectStore.mutateProject((value) => mergeImportedTsv(value, imported, id, now()));
@@ -462,13 +467,18 @@
 
   async function exportTsv(): Promise<void> {
     if (transitionBusy || closePromise) return;
-    const current = get(projectStore).project;
-    if (!current) return;
     try {
+      if (!await waitForMultilinePolicy()) return;
+      if (transitionBusy || closePromise) return;
+      let current = get(projectStore).project;
+      if (!current) return;
       const defaultPath = `${basename(current.audioIdentity.canonicalPath).replace(/\.[^.]+$/, '')}.tsv`;
       const path = await pickers.exportTsv(defaultPath);
       if (!path) return;
+      if (!await waitForMultilinePolicy()) return;
       if (transitionBusy || closePromise) return;
+      current = get(projectStore).project;
+      if (!current) return;
       await bridge.writeTsv(path, current);
       status = `Exported ${current.annotations.length} annotation${current.annotations.length === 1 ? '' : 's'}`;
     } catch (error) {
@@ -486,12 +496,27 @@
   }
 
   async function setMultilinePolicy(multilinePolicy: MultilinePolicy): Promise<void> {
-    if (transitionBusy || closePromise) return;
-    const succeeded = await projectStore.mutateProject((value) => ({
+    if (transitionBusy || closePromise || multilinePolicyMutation) return;
+    const request = projectStore.mutateProject((value) => ({
       ...value,
       exportSettings: { ...value.exportSettings, multilinePolicy }
     }));
-    if (!succeeded) persistentError = get(projectStore).saveError ?? 'The multiline export setting could not be saved';
+    multilinePolicyMutation = request;
+    settingsBusy = true;
+    try {
+      const succeeded = await request;
+      if (!succeeded) persistentError = get(projectStore).saveError ?? 'The multiline export setting could not be saved';
+    } finally {
+      if (multilinePolicyMutation === request) {
+        multilinePolicyMutation = null;
+        settingsBusy = false;
+      }
+    }
+  }
+
+  async function waitForMultilinePolicy(): Promise<boolean> {
+    const pending = multilinePolicyMutation;
+    return pending ? pending : true;
   }
 
   function setSelection(selection: Selection): void {
@@ -640,6 +665,7 @@
     volume={playback.volume}
     {analysisPercent}
     busy={transitionBusy}
+    {settingsBusy}
     actions={toolbarActions}
   />
   <div class="app-status" role="status" aria-label="Operation status" aria-live="polite">{status}</div>

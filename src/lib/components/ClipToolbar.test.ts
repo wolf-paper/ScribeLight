@@ -53,4 +53,16 @@ describe('ClipToolbar', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel analysis' }));
     expect(handlers.cancelAnalysis).toHaveBeenCalledTimes(1);
   });
+
+  it('disables policy-dependent file actions while a multiline setting is saving', () => {
+    render(ClipToolbar, {
+      filename: 'clip.wav', playing: false, loopEnabled: false, canLoop: true,
+      format: 'seconds', multilinePolicy: 'escape', settingsBusy: true, actions: actions()
+    });
+
+    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Export TSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled();
+  });
 });

@@ -263,6 +263,105 @@ describe('ProjectStore', () => {
     }));
   });
 
+  it('persists a selected annotation merged while a committed mutation save is unresolved', async () => {
+    const project = createProject(audio);
+    project.annotations.push({
+      ...project.draft,
+      id: 'saved-annotation',
+      startMs: 40,
+      endMs: 80,
+      transcription: 'selected while saving',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    });
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
+    store.selectAnnotation('saved-annotation');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+
+    mutationSave.resolve();
+    await expect(mutation).resolves.toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      displayFormat: 'clock',
+      activeAnnotationId: 'saved-annotation',
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: expect.objectContaining({
+        startMs: 40,
+        endMs: 80,
+        transcription: 'selected while saving'
+      })
+    }));
+  });
+
+  it('persists a cleared editor merged while a committed mutation save is unresolved', async () => {
+    const project = createProject(audio);
+    project.activeAnnotationId = 'saved-annotation';
+    project.activeSelection = { startMs: 40, endMs: 80 };
+    project.draft = { ...project.draft, startMs: 40, endMs: 80, transcription: 'clear while saving' };
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
+    store.clearDraft();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+
+    mutationSave.resolve();
+    await expect(mutation).resolves.toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      displayFormat: 'clock',
+      activeAnnotationId: null,
+      activeSelection: null,
+      draft: expect.objectContaining({ startMs: 0, endMs: 0, transcription: '' })
+    }));
+  });
+
+  it('recovers a selected annotation after the overlapping committed mutation save fails', async () => {
+    const project = createProject(audio);
+    project.annotations.push({
+      ...project.draft,
+      id: 'saved-annotation',
+      startMs: 40,
+      endMs: 80,
+      transcription: 'recover selection',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    });
+    const failedSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => failedSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
+    store.selectAnnotation('saved-annotation');
+    await vi.advanceTimersByTimeAsync(300);
+    failedSave.reject(new Error('disk full'));
+
+    await expect(mutation).resolves.toBe(false);
+    await vi.runAllTimersAsync();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      displayFormat: 'seconds',
+      activeAnnotationId: 'saved-annotation',
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: expect.objectContaining({ transcription: 'recover selection' })
+    }));
+  });
+
   it('merges an unrelated newer draft field without restoring a reference removed by the committed mutation', async () => {
     const mutationSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);

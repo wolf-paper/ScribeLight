@@ -71,12 +71,12 @@ export class ProjectStore implements Readable<ProjectState> {
 
   selectAnnotation(id: string): void {
     if (this.mutationsBlocked) return;
+    const annotation = get(this.state).project?.annotations.find((item) => item.id === id);
+    if (!annotation) return;
     this.markDraftFields(draftFields);
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
     this.updateProject((project) => {
-      const annotation = project.annotations.find((item) => item.id === id);
-      if (!annotation) return project;
       const draft: AnnotationDraft = {
         startMs: annotation.startMs,
         endMs: annotation.endMs,
@@ -96,6 +96,7 @@ export class ProjectStore implements Readable<ProjectState> {
         draft
       };
     });
+    this.scheduleRecovery();
   }
 
   async removeAnnotation(id: string): Promise<void> {
@@ -129,6 +130,7 @@ export class ProjectStore implements Readable<ProjectState> {
 
   clearDraft(): void {
     if (this.mutationsBlocked) return;
+    if (!get(this.state).project) return;
     this.markDraftFields(draftFields);
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
@@ -138,6 +140,7 @@ export class ProjectStore implements Readable<ProjectState> {
       activeSelection: null,
       draft: { ...emptyDraft(), speakerId: project.speakers[0]?.id ?? null }
     }));
+    this.scheduleRecovery();
   }
 
   async commitDraft(now = new Date().toISOString()): Promise<boolean> {
