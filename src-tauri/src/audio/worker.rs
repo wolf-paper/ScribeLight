@@ -231,6 +231,7 @@ pub(crate) fn run_worker<S: FrameSource>(request: WorkerRequest<S>) {
             &mut expected_next,
             &mut at_end,
             &mut resume_after_refill,
+            duration_frames,
         ) {
             CommandAction::Continue => {}
             CommandAction::Stop => {
@@ -261,6 +262,7 @@ pub(crate) fn run_worker<S: FrameSource>(request: WorkerRequest<S>) {
                         &mut expected_next,
                         &mut at_end,
                         &mut resume_after_refill,
+                        duration_frames,
                     ) == CommandAction::Stop
                     {
                         let _ = status_tx.try_send(WorkerStatus::Stopped);
@@ -287,6 +289,7 @@ pub(crate) fn run_worker<S: FrameSource>(request: WorkerRequest<S>) {
                         &mut expected_next,
                         &mut at_end,
                         &mut resume_after_refill,
+                        duration_frames,
                     ) == CommandAction::Stop
                     {
                         let _ = status_tx.try_send(WorkerStatus::Stopped);
@@ -377,6 +380,7 @@ fn drain_commands(
     expected_next: &mut Option<u64>,
     at_end: &mut bool,
     resume_after_refill: &mut bool,
+    duration_frames: u64,
 ) -> CommandAction {
     loop {
         match command_rx.try_recv() {
@@ -388,6 +392,7 @@ fn drain_commands(
                     expected_next,
                     at_end,
                     resume_after_refill,
+                    duration_frames,
                 ) == CommandAction::Stop
                 {
                     return CommandAction::Stop;
@@ -406,6 +411,7 @@ fn apply_command(
     expected_next: &mut Option<u64>,
     at_end: &mut bool,
     resume_after_refill: &mut bool,
+    duration_frames: u64,
 ) -> CommandAction {
     match command {
         EngineCommand::Play => {
@@ -431,14 +437,26 @@ fn apply_command(
             *resume_after_refill = false;
         }
         EngineCommand::Seek(frame) => {
-            state.generation.fetch_add(1, Ordering::AcqRel);
-            state
-                .terminal_generation
-                .store(NO_TERMINAL_GENERATION, Ordering::Release);
+            let generation = state
+                .generation
+                .fetch_add(1, Ordering::AcqRel)
+                .wrapping_add(1);
             state.source_frame.store(frame, Ordering::Release);
             cursor.set_position(frame);
             *expected_next = None;
-            *at_end = false;
+            if frame >= duration_frames {
+                state.playing.store(false, Ordering::Release);
+                *at_end = true;
+                *resume_after_refill = false;
+                state
+                    .terminal_generation
+                    .store(generation, Ordering::Release);
+            } else {
+                state
+                    .terminal_generation
+                    .store(NO_TERMINAL_GENERATION, Ordering::Release);
+                *at_end = false;
+            }
         }
         EngineCommand::SetLoop(range) => {
             state.generation.fetch_add(1, Ordering::AcqRel);
@@ -729,6 +747,112 @@ mod tests {
     }
 
     #[test]
+    fn paused_exact_end_seek_is_terminal_and_play_restarts_from_zero() {
+        let source = SyntheticSource::stereo_ramp(1_000, 0, 5);
+        let (producer, mut consumer) = rtrb::RingBuffer::new(8);
+        let state = Arc::new(RenderState::new());
+        let (command_tx, command_rx) = bounded(4);
+        let (status_tx, status_rx) = bounded(2);
+        let worker_state = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            run_worker(WorkerRequest {
+                source,
+                producer,
+                state: worker_state,
+                command_rx,
+                status_tx,
+                duration_frames: 5,
+                initial_position: 0,
+                initial_loop: None,
+                fill_batch_frames: 8,
+                lookahead_frames: 8,
+            });
+        });
+        assert!(matches!(
+            status_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            WorkerStatus::Ready
+        ));
+
+        command_tx.send(EngineCommand::Seek(5)).unwrap();
+        let terminal_generation = wait_for_terminal_generation(&state, 1);
+        assert_eq!(terminal_generation, 1);
+        assert_eq!(state.generation.load(Ordering::Acquire), 1);
+        assert_eq!(state.source_frame.load(Ordering::Acquire), 5);
+        assert!(!state.playing.load(Ordering::Acquire));
+
+        command_tx.send(EngineCommand::Play).unwrap();
+        let replay_generation = wait_for_generation(&state, 2);
+        wait_for_playing(&state, true);
+        let restarted = wait_for_generation_frame(&mut consumer, replay_generation);
+        assert_eq!(restarted.source_frame, 0);
+        assert_eq!(
+            state.terminal_generation.load(Ordering::Acquire),
+            NO_TERMINAL_GENERATION
+        );
+
+        command_tx.send(EngineCommand::Shutdown).unwrap();
+        assert!(matches!(
+            status_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            WorkerStatus::Stopped
+        ));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn playing_exact_end_seek_pauses_and_play_restarts_from_active_loop_start() {
+        let source = SyntheticSource::stereo_ramp(1_000, 0, 100);
+        let range = LoopRange::new(20, 30).unwrap();
+        let (producer, mut consumer) = rtrb::RingBuffer::new(16);
+        let state = Arc::new(RenderState::new());
+        let (command_tx, command_rx) = bounded(4);
+        let (status_tx, status_rx) = bounded(2);
+        let worker_state = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            run_worker(WorkerRequest {
+                source,
+                producer,
+                state: worker_state,
+                command_rx,
+                status_tx,
+                duration_frames: 100,
+                initial_position: range.start,
+                initial_loop: Some(range),
+                fill_batch_frames: 8,
+                lookahead_frames: 8,
+            });
+        });
+        assert!(matches!(
+            status_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            WorkerStatus::Ready
+        ));
+        command_tx.send(EngineCommand::Play).unwrap();
+        wait_for_playing(&state, true);
+
+        command_tx.send(EngineCommand::Seek(100)).unwrap();
+        let terminal_generation = wait_for_terminal_generation(&state, 1);
+        assert_eq!(terminal_generation, 1);
+        assert_eq!(state.source_frame.load(Ordering::Acquire), 100);
+        assert!(!state.playing.load(Ordering::Acquire));
+
+        command_tx.send(EngineCommand::Play).unwrap();
+        let replay_generation = wait_for_generation(&state, 2);
+        wait_for_playing(&state, true);
+        let restarted = wait_for_generation_frame(&mut consumer, replay_generation);
+        assert_eq!(restarted.source_frame, range.start);
+        assert_eq!(
+            state.terminal_generation.load(Ordering::Acquire),
+            NO_TERMINAL_GENERATION
+        );
+
+        command_tx.send(EngineCommand::Shutdown).unwrap();
+        assert!(matches!(
+            status_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            WorkerStatus::Stopped
+        ));
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn initial_refill_error_is_reported_before_ready() {
         let (producer, _consumer) = rtrb::RingBuffer::new(8);
         let state = Arc::new(RenderState::new());
@@ -865,5 +989,32 @@ mod tests {
             std::thread::yield_now();
         }
         panic!("worker did not set playing to {wanted}");
+    }
+
+    fn wait_for_terminal_generation(state: &RenderState, wanted: u64) -> u64 {
+        for _ in 0..100_000 {
+            let generation = state.terminal_generation.load(Ordering::Acquire);
+            if generation == wanted {
+                return generation;
+            }
+            std::thread::yield_now();
+        }
+        panic!("worker did not mark generation {wanted} terminal");
+    }
+
+    fn wait_for_generation_frame(
+        consumer: &mut rtrb::Consumer<QueuedFrame>,
+        generation: u64,
+    ) -> QueuedFrame {
+        for _ in 0..100_000 {
+            if let Ok(frame) = consumer.pop() {
+                if frame.generation == generation {
+                    return frame;
+                }
+            } else {
+                std::thread::yield_now();
+            }
+        }
+        panic!("worker did not queue a frame for generation {generation}");
     }
 }

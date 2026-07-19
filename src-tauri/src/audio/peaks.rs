@@ -104,12 +104,18 @@ pub fn read_cache(
     identity: &AudioIdentity,
 ) -> Result<Option<PeakData>, AppError> {
     let path = cache_path(cache_dir, identity);
-    if !path.exists() {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let peaks: PeakData = match serde_json::from_slice(&bytes) {
+        Ok(peaks) => peaks,
+        Err(_) => return Ok(None),
+    };
+    if validate_cache(&peaks, identity).is_err() {
         return Ok(None);
     }
-    let peaks: PeakData = serde_json::from_slice(&fs::read(path)?)
-        .map_err(|error| AppError::Audio(format!("Invalid waveform cache: {error}")))?;
-    validate_cache(&peaks, identity)?;
     Ok(Some(peaks))
 }
 
@@ -242,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_cache_errors_without_touching_the_source_audio() {
+    fn malformed_cache_is_a_miss_without_touching_the_source_audio() {
         let (_directory, source) = write_wav(&[1_000_i16; 10], 1_000);
         let cache = tempfile::tempdir().unwrap();
         let identity = AudioDecoder::open(&source).unwrap().identity().clone();
@@ -250,13 +256,12 @@ mod tests {
         std::fs::write(cache_path(cache.path(), &identity), b"not json").unwrap();
         let original = std::fs::read(&source).unwrap();
 
-        let error = read_cache(cache.path(), &identity).unwrap_err();
-        assert!(error.to_string().contains("Invalid waveform cache"));
+        assert_eq!(read_cache(cache.path(), &identity).unwrap(), None);
         assert_eq!(std::fs::read(&source).unwrap(), original);
     }
 
     #[test]
-    fn rejects_a_syntactically_valid_cache_with_wrong_identity_or_peak_shape() {
+    fn syntactically_valid_cache_with_wrong_identity_or_peak_shape_is_a_miss() {
         let (_directory, source) = write_wav(&[1_000_i16; 10], 1_000);
         let cache = tempfile::tempdir().unwrap();
         let identity = AudioDecoder::open(&source).unwrap().identity().clone();
@@ -274,8 +279,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = read_cache(cache.path(), &identity).unwrap_err();
-        assert!(error.to_string().contains("Invalid waveform cache"));
+        assert_eq!(read_cache(cache.path(), &identity).unwrap(), None);
     }
 
     #[test]
@@ -313,7 +317,20 @@ mod tests {
                 serde_json::to_vec(&invalid).unwrap(),
             )
             .unwrap();
-            assert!(read_cache(cache.path(), &identity).is_err());
+            assert_eq!(read_cache(cache.path(), &identity).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn cache_file_io_errors_are_not_silently_treated_as_misses() {
+        let (_directory, source) = write_wav(&[1_000_i16; 10], 1_000);
+        let cache = tempfile::tempdir().unwrap();
+        let identity = AudioDecoder::open(&source).unwrap().identity().clone();
+        let path = cache_path(cache.path(), &identity);
+        std::fs::create_dir_all(&path).unwrap();
+
+        let error = read_cache(cache.path(), &identity).unwrap_err();
+
+        assert!(matches!(error, AppError::Io(_)));
     }
 }

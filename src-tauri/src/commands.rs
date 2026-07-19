@@ -9,7 +9,10 @@ use crate::{
     persistence,
     tsv::{self, ImportedTsv},
 };
+use atomic_write_file::AtomicWriteFile;
 use std::{
+    fs::{File, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -208,6 +211,82 @@ fn ensure_source_unchanged(path: &Path, original: &AudioIdentity) -> Result<(), 
     }
 }
 
+fn canonical_export_destination(path: &Path) -> Result<PathBuf, AppError> {
+    match path.canonicalize() {
+        Ok(canonical) => Ok(canonical),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let file_name = path.file_name().ok_or_else(|| {
+                AppError::Tsv("TSV export destination must name a file".to_owned())
+            })?;
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            Ok(parent.canonicalize()?.join(file_name))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(windows)]
+fn canonical_paths_match(left: &Path, right: &Path) -> bool {
+    let left = left.to_string_lossy();
+    let right = right.to_string_lossy();
+    left.eq_ignore_ascii_case(right.as_ref())
+}
+
+#[cfg(not(windows))]
+fn canonical_paths_match(left: &Path, right: &Path) -> bool {
+    left == right
+}
+
+fn ensure_export_is_not_source(destination: &Path, source: &Path) -> Result<(), AppError> {
+    let destination = canonical_export_destination(destination)?;
+    if canonical_paths_match(&destination, source) {
+        return Err(AppError::Tsv(
+            "TSV export destination must not replace the source audio".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn open_source_export_guard(source: &Path) -> Result<File, AppError> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        // Keep a read handle that denies writes and deletion until the atomic export commits.
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        options.share_mode(FILE_SHARE_READ);
+    }
+    Ok(options.open(source)?)
+}
+
+pub fn write_project_tsv_export_to_path(path: &Path, project: &Project) -> Result<(), AppError> {
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("tsv"))
+    {
+        return Err(AppError::Tsv(
+            "TSV export destination must use the .tsv extension".to_owned(),
+        ));
+    }
+
+    let source = Path::new(&project.audio_identity.canonical_path).canonicalize()?;
+    let source_guard = open_source_export_guard(&source)?;
+    let text = tsv::export_tsv(project)?;
+    ensure_export_is_not_source(path, &source)?;
+
+    let mut file = AtomicWriteFile::options().open(path)?;
+    file.write_all(text.as_bytes())?;
+    ensure_export_is_not_source(path, &source)?;
+    file.commit()?;
+    drop(source_guard);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn save_project(app: AppHandle, project: Project) -> Result<(), AppError> {
     let path = persistence::project_path(&app_data(&app)?, &project.audio_identity.canonical_path);
@@ -234,7 +313,7 @@ pub fn read_tsv(path: String, multiline_policy: MultilinePolicy) -> Result<Impor
 
 #[tauri::command]
 pub fn write_tsv(path: String, project: Project) -> Result<(), AppError> {
-    tsv::write_tsv_to_path(Path::new(&path), &project)
+    write_project_tsv_export_to_path(Path::new(&path), &project)
 }
 
 #[tauri::command]

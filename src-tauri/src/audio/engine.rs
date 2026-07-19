@@ -38,11 +38,15 @@ pub fn seek_frame(
     milliseconds: u64,
     sample_rate: u32,
     duration_frames: u64,
+    duration_ms: u64,
 ) -> Result<u64, AppError> {
     if sample_rate == 0 || duration_frames == 0 {
         return Err(AppError::Audio(
             "Cannot seek audio without a valid duration and sample rate".to_owned(),
         ));
+    }
+    if milliseconds >= duration_ms {
+        return Ok(duration_frames);
     }
     let requested = u128::from(milliseconds).saturating_mul(u128::from(sample_rate)) / 1_000;
     Ok(u64::try_from(requested)
@@ -298,12 +302,16 @@ impl AudioEngine {
             milliseconds,
             active.identity.sample_rate,
             active.duration_frames,
+            active.identity.duration_ms,
         )?;
         active.send_command(EngineCommand::Seek(frame))?;
         active
             .render_state
             .source_frame
             .store(frame, Ordering::Release);
+        if frame >= active.duration_frames {
+            active.render_state.playing.store(false, Ordering::Release);
+        }
         Ok(())
     }
 
@@ -644,12 +652,13 @@ mod tests {
     }
 
     #[test]
-    fn seek_milliseconds_clamp_to_the_authoritative_clip_extent() {
-        assert_eq!(seek_frame(250, 48_000, 48_000).unwrap(), 12_000);
-        assert_eq!(seek_frame(1_000, 48_000, 48_000).unwrap(), 48_000);
-        assert_eq!(seek_frame(u64::MAX, 48_000, 48_000).unwrap(), 48_000);
-        assert!(seek_frame(1, 0, 48_000).is_err());
-        assert!(seek_frame(1, 48_000, 0).is_err());
+    fn seek_milliseconds_clamp_to_the_reported_millisecond_and_source_frame_extents() {
+        assert_eq!(seek_frame(250, 48_000, 48_023, 1_000).unwrap(), 12_000);
+        assert_eq!(seek_frame(999, 48_000, 48_023, 1_000).unwrap(), 47_952);
+        assert_eq!(seek_frame(1_000, 48_000, 48_023, 1_000).unwrap(), 48_023);
+        assert_eq!(seek_frame(u64::MAX, 48_000, 48_023, 1_000).unwrap(), 48_023);
+        assert!(seek_frame(1, 0, 48_000, 1_000).is_err());
+        assert!(seek_frame(1, 48_000, 0, 1_000).is_err());
     }
 
     #[test]

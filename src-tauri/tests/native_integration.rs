@@ -10,6 +10,7 @@ use lightscribe_lib::{
         Intelligibility, LabelDefinition, MultilinePolicy, Overlap, Project, TimeDisplayFormat,
     },
     tsv::{export_tsv, parse_tsv, write_tsv_to_path},
+    write_project_tsv_export_to_path,
 };
 use std::{
     fs::OpenOptions,
@@ -30,6 +31,21 @@ fn fixture(name: &str) -> PathBuf {
 fn source_digest(path: &Path) -> (u64, blake3::Hash) {
     let bytes = std::fs::read(path).expect("read source fixture");
     (bytes.len() as u64, blake3::hash(&bytes))
+}
+
+fn reopen_peak_data(source: &Path, cache_dir: &Path) -> lightscribe_lib::model::PeakData {
+    let identity = AudioDecoder::open(source)
+        .expect("inspect source while reopening")
+        .identity()
+        .clone();
+    if let Some(cached) = read_cache(cache_dir, &identity).expect("read derived peak cache") {
+        return cached;
+    }
+
+    let regenerated = analyze_path(source, &AtomicBool::new(false), |_| {})
+        .expect("regenerate derived peak cache");
+    write_cache(cache_dir, &identity, &regenerated).expect("atomically replace derived peak cache");
+    regenerated
 }
 
 fn populated_export_project(identity: AudioIdentity) -> Project {
@@ -213,6 +229,49 @@ fn peak_cache_key_invalidates_after_source_size_or_mtime_changes() {
 }
 
 #[test]
+fn corrupt_truncated_and_invalid_peak_caches_regenerate_when_audio_reopens() {
+    let directory = tempfile::tempdir().expect("temporary analysis directory");
+    let source = directory.path().join("cache-recovery.wav");
+    std::fs::copy(fixture("annotation-audio-test.wav"), &source).expect("copy WAV fixture");
+    let cache_dir = directory.path().join("cache");
+    let identity = AudioDecoder::open(&source)
+        .expect("inspect copied source")
+        .identity()
+        .clone();
+    let expected =
+        analyze_path(&source, &AtomicBool::new(false), |_| {}).expect("establish expected peaks");
+    let cache_file = cache_path(&cache_dir, &identity);
+    std::fs::create_dir_all(&cache_dir).expect("create cache directory");
+
+    let invalid_shape = lightscribe_lib::model::PeakData {
+        duration_ms: identity.duration_ms + 1,
+        ..expected.clone()
+    };
+    let broken_caches = [
+        b"{\"totalFrames\":".to_vec(),
+        br#"{"schemaVersion":999}"#.to_vec(),
+        serde_json::to_vec(&invalid_shape).expect("serialize invalid peak shape"),
+    ];
+
+    for broken in broken_caches {
+        std::fs::write(&cache_file, broken).expect("install broken cache");
+
+        let reopened = reopen_peak_data(&source, &cache_dir);
+
+        assert_eq!(reopened, expected);
+        assert_eq!(
+            read_cache(&cache_dir, &identity).expect("read regenerated cache"),
+            Some(expected.clone())
+        );
+        let persisted: lightscribe_lib::model::PeakData = serde_json::from_slice(
+            &std::fs::read(&cache_file).expect("read regenerated cache bytes"),
+        )
+        .expect("regenerated cache contains valid JSON");
+        assert_eq!(persisted, expected);
+    }
+}
+
+#[test]
 fn thirty_minute_analysis_bounds_peak_pairs_and_pcm_ring_to_one_second() {
     let directory = tempfile::tempdir().expect("temporary fixture directory");
     let path = directory.path().join("thirty-minutes.wav");
@@ -251,7 +310,7 @@ fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
         .clone();
     let project = populated_export_project(identity);
     let directory = tempfile::tempdir().expect("temporary export directory");
-    let output = directory.path().join("renamed-labels.tsv");
+    let output = directory.path().join("renamed-labels.TSV");
     let expected = concat!(
         "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n",
         "3.000\t4.000\tspeech\tもう一度\\nお願いします\tintelligible\tnarrator\toverlap\thigh\twhisper\t確認\\n済み\n"
@@ -261,7 +320,8 @@ fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
         export_tsv(&project).expect("serialize populated project"),
         expected
     );
-    write_tsv_to_path(&output, &project).expect("atomically write populated TSV");
+    write_project_tsv_export_to_path(&output, &project)
+        .expect("safely and atomically write populated TSV");
     assert_eq!(
         std::fs::read(&output).expect("read exported TSV"),
         expected.as_bytes()
@@ -283,6 +343,48 @@ fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
     assert_eq!(parsed.annotations[0].overlap, Overlap::Overlap);
     assert_eq!(parsed.annotations[0].acoustic_tags, vec!["whisper"]);
     assert_eq!(parsed.annotations[0].notes, "確認\n済み");
+}
+
+#[test]
+fn production_tsv_export_rejects_source_aliases_and_non_tsv_destinations() {
+    let directory = tempfile::tempdir().expect("temporary export directory");
+    let source = directory.path().join("source-audio.tsv");
+    std::fs::copy(fixture("annotation-audio-test.wav"), &source)
+        .expect("copy WAV bytes under a TSV filename");
+    let mut identity = AudioDecoder::open(&fixture("annotation-audio-test.wav"))
+        .expect("inspect WAV fixture")
+        .identity()
+        .clone();
+    identity.canonical_path = source
+        .canonicalize()
+        .expect("canonicalize copied source")
+        .to_string_lossy()
+        .into_owned();
+    identity.size = std::fs::metadata(&source)
+        .expect("read copied source metadata")
+        .len();
+    let project = populated_export_project(identity);
+    let source_bytes = std::fs::read(&source).expect("read original source bytes");
+    let source_before = source_digest(&source);
+    let alias_component = directory.path().join("existing-directory");
+    std::fs::create_dir(&alias_component).expect("create alias path component");
+    let source_alias = alias_component.join("..").join("source-audio.tsv");
+
+    let alias_error = write_project_tsv_export_to_path(&source_alias, &project)
+        .expect_err("source alias must never be replaced by TSV output");
+    assert!(alias_error.to_string().contains("source audio"));
+    assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(source_digest(&source), source_before);
+
+    let non_tsv = directory.path().join("annotations.txt");
+    let non_tsv_bytes = b"existing non-TSV content";
+    std::fs::write(&non_tsv, non_tsv_bytes).expect("create existing non-TSV destination");
+    let extension_error = write_project_tsv_export_to_path(&non_tsv, &project)
+        .expect_err("non-TSV export path must be rejected");
+    assert!(extension_error.to_string().contains(".tsv"));
+    assert_eq!(std::fs::read(&non_tsv).unwrap(), non_tsv_bytes);
+    assert_eq!(std::fs::read(&source).unwrap(), source_bytes);
+    assert_eq!(source_digest(&source), source_before);
 }
 
 #[test]

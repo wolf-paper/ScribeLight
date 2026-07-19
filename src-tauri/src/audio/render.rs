@@ -98,7 +98,9 @@ impl RenderCore {
             if let Some(frame) = frame {
                 let volume = self.volume();
                 for (channel, sample) in device_frame.iter_mut().enumerate() {
-                    let source_sample = if channel == 0 {
+                    let source_sample = if output_channels == 1 {
+                        frame.left.mul_add(0.5, frame.right * 0.5)
+                    } else if channel == 0 {
                         frame.left
                     } else {
                         frame.right
@@ -326,14 +328,23 @@ mod tests {
     }
 
     #[test]
-    fn mono_device_uses_the_left_channel_and_updates_the_source_frame() {
-        let (mut producer, consumer) = rtrb::RingBuffer::new(2);
+    fn mono_device_averages_right_only_and_both_channels_and_updates_the_source_frame() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(3);
         producer
             .push(QueuedFrame {
                 generation: 0,
                 source_frame: 13,
+                left: 0.0,
+                right: 0.8,
+                terminal: false,
+            })
+            .unwrap();
+        producer
+            .push(QueuedFrame {
+                generation: 0,
+                source_frame: 14,
                 left: 0.8,
-                right: 0.2,
+                right: 0.4,
                 terminal: false,
             })
             .unwrap();
@@ -341,13 +352,35 @@ mod tests {
         state.playing.store(true, Ordering::Release);
         state.set_volume(0.5);
         let mut render = RenderCore::new(consumer, Arc::clone(&state));
-        let mut output = [1.0_f32; 1];
+        let mut output = [1.0_f32; 2];
 
         render.fill_f32(&mut output, 1);
 
-        assert_eq!(output, [0.4]);
-        assert_eq!(state.source_frame.load(Ordering::Acquire), 13);
+        assert_eq!(output, [0.2, 0.3]);
+        assert_eq!(state.source_frame.load(Ordering::Acquire), 14);
         assert_eq!(state.underruns.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn mono_average_scales_before_adding_to_avoid_overflow() {
+        let (mut producer, consumer) = rtrb::RingBuffer::new(2);
+        producer
+            .push(QueuedFrame {
+                generation: 0,
+                source_frame: 1,
+                left: f32::MAX,
+                right: f32::MAX,
+                terminal: false,
+            })
+            .unwrap();
+        let state = Arc::new(RenderState::new());
+        state.playing.store(true, Ordering::Release);
+        let mut render = RenderCore::new(consumer, state);
+        let mut output = [0.0_f32; 1];
+
+        render.fill_f32(&mut output, 1);
+
+        assert_eq!(output, [f32::MAX]);
     }
 
     #[test]

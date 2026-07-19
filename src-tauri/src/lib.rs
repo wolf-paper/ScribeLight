@@ -7,6 +7,8 @@ pub mod model;
 pub mod persistence;
 pub mod tsv;
 
+pub use commands::write_project_tsv_export_to_path;
+
 use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
