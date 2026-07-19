@@ -2,12 +2,14 @@ import { screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 
+let expectedPalette = 'ion-magenta';
+
 vi.mock('svelte', async (importOriginal) => {
   const actual = await importOriginal<typeof import('svelte')>();
   return {
     ...actual,
     mount: vi.fn((...args: Parameters<typeof actual.mount>) => {
-      expect(document.documentElement.dataset.palette).toBe('ultraviolet-grid');
+      expect(document.documentElement.dataset.palette).toBe(expectedPalette);
       return actual.mount(...args);
     })
   };
@@ -20,13 +22,15 @@ vi.mock('./lib/bridge/lifecycle', () => ({
   }
 }));
 
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
 
 describe('main entry point', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     document.body.innerHTML = '';
     delete document.documentElement.dataset.palette;
     localStorage.clear();
+    expectedPalette = 'ion-magenta';
     vi.clearAllMocks();
     vi.resetModules();
   });
@@ -34,13 +38,30 @@ describe('main entry point', () => {
   it('mounts the Lightscribe shell into the app target', async () => {
     document.body.innerHTML = '<div id="app"></div>';
     localStorage.setItem('lightscribe.palette', 'ultraviolet-grid');
+    expectedPalette = 'ultraviolet-grid';
 
     const { default: app } = await import('./main');
-    await Promise.resolve(app);
+    const mountedApp = await app;
 
     expect(document.documentElement.dataset.palette).toBe('ultraviolet-grid');
     expect(screen.getByRole('heading', { name: 'Lightscribe' })).toBeInTheDocument();
     expect(mount).toHaveBeenCalledWith(App, {
+      target: document.getElementById('app'),
+      props: expect.objectContaining({ bridge: expect.any(Object), pickers: expect.any(Object) })
+    });
+    await unmount(mountedApp);
+  });
+
+  it('mounts with the default palette when browser storage is unavailable', async () => {
+    document.body.innerHTML = '<div id="app"></div>';
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('denied'); });
+    vi.mocked(mount).mockImplementation(() => ({} as ReturnType<typeof mount>));
+
+    const { default: app } = await import('./main');
+    await app;
+
+    expect(document.documentElement.dataset.palette).toBe('ion-magenta');
+    expect(mount).toHaveBeenCalledWith(expect.any(Function), {
       target: document.getElementById('app'),
       props: expect.objectContaining({ bridge: expect.any(Object), pickers: expect.any(Object) })
     });

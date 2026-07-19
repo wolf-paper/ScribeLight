@@ -7,13 +7,23 @@ export type PaletteId = typeof PALETTE_IDS[number];
 export const DEFAULT_PALETTE: PaletteId = 'ion-magenta';
 export const PALETTE_STORAGE_KEY = 'lightscribe.palette';
 
+type PaletteStorage = Pick<Storage, 'getItem' | 'setItem'>;
+
+export function getBrowserStorage(): PaletteStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 export function normalizePalette(value: string | null): PaletteId {
   return PALETTE_IDS.includes(value as PaletteId) ? value as PaletteId : DEFAULT_PALETTE;
 }
 
-export function loadPalette(storage: Pick<Storage, 'getItem'>): PaletteId {
+export function loadPalette(storage: Pick<Storage, 'getItem'> | null | undefined): PaletteId {
   try {
-    return normalizePalette(storage.getItem(PALETTE_STORAGE_KEY));
+    return normalizePalette(storage?.getItem(PALETTE_STORAGE_KEY) ?? null);
   } catch {
     return DEFAULT_PALETTE;
   }
@@ -25,12 +35,12 @@ export function applyPalette(value: PaletteId, root: HTMLElement = document.docu
 
 export function persistPalette(
   value: PaletteId,
-  storage: Pick<Storage, 'setItem'> = localStorage,
+  storage: Pick<Storage, 'setItem'> | null | undefined = getBrowserStorage(),
   root: HTMLElement = document.documentElement
 ): void {
   applyPalette(value, root);
   try {
-    storage.setItem(PALETTE_STORAGE_KEY, value);
+    storage?.setItem(PALETTE_STORAGE_KEY, value);
   } catch {
     // Appearance remains usable.
   }

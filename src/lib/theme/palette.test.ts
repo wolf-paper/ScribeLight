@@ -24,14 +24,24 @@ describe('palette preferences', () => {
     expect(loadPalette({ getItem: () => { throw new Error('denied'); } })).toBe('ion-magenta');
   });
 
-  it('applies a persisted palette even when storage is unavailable', () => {
-    const storage = { setItem: vi.fn() };
+  it('applies a persisted palette when writing storage fails', () => {
+    const storage = { setItem: vi.fn(() => { throw new Error('denied'); }) };
     const root = document.documentElement;
 
     persistPalette('crimson-scope', storage, root);
 
     expect(root.dataset.palette).toBe('crimson-scope');
     expect(storage.setItem).toHaveBeenCalledWith(PALETTE_STORAGE_KEY, 'crimson-scope');
+  });
+
+  it('applies a persisted palette when browser storage is unavailable', () => {
+    const root = document.createElement('div');
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('denied'); });
+
+    expect(() => persistPalette('arctic-steel', undefined, root)).not.toThrow();
+    expect(root.dataset.palette).toBe('arctic-steel');
+
+    vi.restoreAllMocks();
   });
 
   it('can apply a palette to an explicit root', () => {

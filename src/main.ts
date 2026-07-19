@@ -1,9 +1,9 @@
 import './app.css';
 import App from './App.svelte';
 import { mount } from 'svelte';
-import { applyPalette, loadPalette } from './lib/theme/palette';
+import { applyPalette, getBrowserStorage, loadPalette } from './lib/theme/palette';
 
-applyPalette(loadPalette(localStorage));
+applyPalette(loadPalette(getBrowserStorage()));
 
 const mountApp = (props = {}) => mount(App, {
   target: document.getElementById('app')!, props
