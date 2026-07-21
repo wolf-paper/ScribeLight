@@ -12,6 +12,8 @@
   --color-waveform: #71DCE8;
   --color-waveform-active: #A5F3FC;
   --color-selection-region: rgb(239 91 173 / .28);
+  --color-annotation-region: rgb(239 91 173 / .12);
+  --color-annotation-preview: rgb(239 91 173 / .44);
   --color-selection-wash: #2B244A;
   --color-loop-boundary: #D96AEC;
   --color-playhead: #FFB1DA;
@@ -63,6 +65,8 @@
   --color-waveform: #A5F3FC;
   --color-waveform-active: #D7FAFF;
   --color-selection-region: rgb(56 189 248 / .28);
+  --color-annotation-region: rgb(56 189 248 / .12);
+  --color-annotation-preview: rgb(56 189 248 / .44);
   --color-selection-wash: #1B3C4E;
   --color-loop-boundary: #38BDF8;
   --color-playhead: #E0F9FF;
@@ -84,6 +88,8 @@
   --color-waveform: #E2B2FF;
   --color-waveform-active: #F0D4FF;
   --color-selection-region: rgb(185 120 246 / .28);
+  --color-annotation-region: rgb(185 120 246 / .12);
+  --color-annotation-preview: rgb(185 120 246 / .44);
   --color-selection-wash: #3A1E50;
   --color-loop-boundary: #C98AFF;
   --color-playhead: #F7D8FF;
@@ -105,6 +111,8 @@
   --color-waveform: #FFB0BC;
   --color-waveform-active: #FFD3DA;
   --color-selection-region: rgb(255 100 124 / .28);
+  --color-annotation-region: rgb(255 100 124 / .12);
+  --color-annotation-preview: rgb(255 100 124 / .44);
   --color-selection-wash: #4B1D28;
   --color-loop-boundary: #FF7A8E;
   --color-playhead: #FFE0E5;

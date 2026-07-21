@@ -68,14 +68,22 @@ describe('Task 15 release configuration', () => {
     expect(css).toContain(':focus-visible');
   });
 
-  it('defines exact selection-region tokens per palette and a bounded proportional waveform height', () => {
+  it('defines exact waveform-region tokens per palette and a bounded proportional waveform height', () => {
     const css = readFileSync('src/app.css', 'utf8');
 
     for (const declaration of [
       '--color-selection-region: rgb(239 91 173 / .28);',
+      '--color-annotation-region: rgb(239 91 173 / .12);',
+      '--color-annotation-preview: rgb(239 91 173 / .44);',
       '--color-selection-region: rgb(56 189 248 / .28);',
+      '--color-annotation-region: rgb(56 189 248 / .12);',
+      '--color-annotation-preview: rgb(56 189 248 / .44);',
       '--color-selection-region: rgb(185 120 246 / .28);',
-      '--color-selection-region: rgb(255 100 124 / .28);'
+      '--color-annotation-region: rgb(185 120 246 / .12);',
+      '--color-annotation-preview: rgb(185 120 246 / .44);',
+      '--color-selection-region: rgb(255 100 124 / .28);',
+      '--color-annotation-region: rgb(255 100 124 / .12);',
+      '--color-annotation-preview: rgb(255 100 124 / .44);'
     ]) expect(css).toContain(declaration);
 
     expect(css).toMatch(/\.waveform,\s*\.waveform-slot\s*\{[^}]*height:\s*clamp\(190px,\s*28vh,\s*300px\)/s);

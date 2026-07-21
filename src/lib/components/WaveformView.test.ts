@@ -13,8 +13,14 @@ const initialPeaks: PeakData = {
 
 describe('WaveformView', () => {
   it('creates a renderer after mount, forwards reactive props, replaces changed peaks, and cleans up once', async () => {
-    const first = { setSelection: vi.fn(), setPlayhead: vi.fn(), setZoom: vi.fn(), destroy: vi.fn() };
-    const second = { setSelection: vi.fn(), setPlayhead: vi.fn(), setZoom: vi.fn(), destroy: vi.fn() };
+    const first = {
+      setSelection: vi.fn(), setAnnotations: vi.fn(), setPreviewAnnotation: vi.fn(),
+      setPlayhead: vi.fn(), setZoom: vi.fn(), destroy: vi.fn()
+    };
+    const second = {
+      setSelection: vi.fn(), setAnnotations: vi.fn(), setPreviewAnnotation: vi.fn(),
+      setPlayhead: vi.fn(), setZoom: vi.fn(), destroy: vi.fn()
+    };
     const createAdapter = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
     const onchange = vi.fn();
     const view = render(WaveformView, {

@@ -8,6 +8,8 @@ import { fakeIdentity, fakePeaks, makeFakeBridge, makeFakeLifecycle, nullPickers
 
 const waveformSpies = vi.hoisted(() => ({
   setSelection: vi.fn(),
+  setAnnotations: vi.fn(),
+  setPreviewAnnotation: vi.fn(),
   setPlayhead: vi.fn(),
   setZoom: vi.fn(),
   destroy: vi.fn()
