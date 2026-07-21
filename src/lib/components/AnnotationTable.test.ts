@@ -132,6 +132,36 @@ describe('AnnotationTable', () => {
     expect(preview).not.toHaveBeenLastCalledWith(null);
   });
 
+  it('hands pointer preview directly to the destination row', async () => {
+    const preview = vi.fn();
+    renderTable({ preview });
+
+    const firstRow = screen.getByRole('row', { name: 'Activate annotation First note' });
+    const overlapRow = screen.getByRole('row', { name: 'Activate annotation Overlapping note' });
+    await fireEvent.pointerEnter(firstRow);
+    await fireEvent.pointerLeave(firstRow, { relatedTarget: overlapRow });
+    await fireEvent.pointerEnter(overlapRow, { relatedTarget: firstRow });
+
+    expect(preview).toHaveBeenLastCalledWith('overlap');
+    expect(preview).not.toHaveBeenCalledWith(null);
+    expect(preview.mock.calls).toEqual([['first'], ['overlap']]);
+  });
+
+  it('hands focus preview directly to the destination row', async () => {
+    const preview = vi.fn();
+    renderTable({ preview });
+
+    const firstRow = screen.getByRole('row', { name: 'Activate annotation First note' });
+    const overlapRow = screen.getByRole('row', { name: 'Activate annotation Overlapping note' });
+    await fireEvent.focusIn(firstRow);
+    await fireEvent.focusOut(firstRow, { relatedTarget: overlapRow });
+    await fireEvent.focusIn(overlapRow, { relatedTarget: firstRow });
+
+    expect(preview).toHaveBeenLastCalledWith('overlap');
+    expect(preview).not.toHaveBeenCalledWith(null);
+    expect(preview.mock.calls).toEqual([['first'], ['overlap']]);
+  });
+
   it('keeps row activation separate from nested Remove actions', async () => {
     const select = vi.fn();
     const remove = vi.fn();
