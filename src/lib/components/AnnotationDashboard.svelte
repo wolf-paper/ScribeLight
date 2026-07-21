@@ -175,17 +175,6 @@
           </label>
         </div>
 
-        <label>
-          Transcription
-          <textarea
-            aria-label="Transcription"
-            rows="5"
-            value={project.draft.transcription}
-            on:input={(event) => store.patchDraft({ transcription: (event.currentTarget as HTMLTextAreaElement).value })}
-            on:keydown={onEditorKeydown}
-          ></textarea>
-        </label>
-
         <div class="metadata-grid">
           <label>
             Intelligibility

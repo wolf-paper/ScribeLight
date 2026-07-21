@@ -132,8 +132,10 @@ describe('App', () => {
     const timeline = screen.getByTestId('timeline-workspace');
     const lowerWorkspace = workspace?.querySelector('.lower-workspace');
     expect(workspace?.firstElementChild).toBe(timeline);
-    expect(lowerWorkspace?.children[0]).toHaveClass('annotation-table');
+    expect(lowerWorkspace?.children[0]).toHaveClass('annotation-column');
     expect(lowerWorkspace?.children[1]).toHaveClass('annotation-dashboard');
+    expect(lowerWorkspace?.querySelector('.annotation-column')?.children[0]).toHaveClass('active-text-editor');
+    expect(lowerWorkspace?.querySelector('.annotation-column')?.children[1]).toHaveClass('annotation-table');
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Edit annotation Saved transcription' }));
 

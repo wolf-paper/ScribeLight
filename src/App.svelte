@@ -12,6 +12,7 @@
     type PlaybackSnapshot
   } from './lib/bridge/native';
   import { tauriLifecycle, type CloseRequestEvent, type LifecycleAdapter } from './lib/bridge/lifecycle';
+  import ActiveTextEditor from './lib/components/ActiveTextEditor.svelte';
   import AnnotationDashboard from './lib/components/AnnotationDashboard.svelte';
   import AnnotationTable from './lib/components/AnnotationTable.svelte';
   import ClipToolbar from './lib/components/ClipToolbar.svelte';
@@ -744,14 +745,17 @@
         disabled={transitionBusy}
       />
       <div class="lower-workspace">
-        <AnnotationTable
-          annotations={tableAnnotations}
-          activeId={project.activeAnnotationId}
-          format={project.displayFormat}
-          disabled={transitionBusy}
-          onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
-          onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
-        />
+        <div class="annotation-column">
+          <ActiveTextEditor store={projectStore} disabled={transitionBusy} />
+          <AnnotationTable
+            annotations={tableAnnotations}
+            activeId={project.activeAnnotationId}
+            format={project.displayFormat}
+            disabled={transitionBusy}
+            onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
+            onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
+          />
+        </div>
         <AnnotationDashboard store={projectStore} disabled={transitionBusy} />
       </div>
     </div>

@@ -29,8 +29,10 @@ describe('AnnotationDashboard', () => {
     setup('clock');
 
     expect(screen.getByRole('region', { name: 'Selection inspector' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Transcription')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Transcription')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Selection duration')).toHaveTextContent('00:00.010');
+    expect(screen.getByLabelText('Notes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Speaker manager')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Acoustic tag manager')).not.toBeInTheDocument();
   });
@@ -42,33 +44,6 @@ describe('AnnotationDashboard', () => {
     expect(screen.getByRole('option', { name: 'Partially intelligible' })).toHaveValue('partially_intelligible');
     expect(screen.getByRole('option', { name: 'Unintelligible' })).toHaveValue('unintelligible');
     expect(screen.getByRole('option', { name: 'Not applicable' })).toHaveValue('not_applicable');
-  });
-
-  it('submits with plain Enter', async () => {
-    const store = setup();
-    const editor = screen.getByLabelText('Transcription');
-
-    await fireEvent.keyDown(editor, { key: 'Enter' });
-
-    expect(get(store).project!.annotations).toHaveLength(1);
-  });
-
-  it('lets Shift+Enter insert a transcription line break without submitting', async () => {
-    const store = setup();
-    const editor = screen.getByLabelText('Transcription');
-    const shiftEnter = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, cancelable: true });
-    editor.dispatchEvent(shiftEnter);
-    await fireEvent.input(editor, { target: { value: 'first\nsecond' } });
-
-    expect(shiftEnter.defaultPrevented).toBe(false);
-    expect(get(store).project!.annotations).toHaveLength(0);
-    expect(get(store).project!.draft.transcription).toBe('first\nsecond');
-  });
-
-  it('does not submit an IME composition confirmation', async () => {
-    const store = setup();
-    await fireEvent.keyDown(screen.getByLabelText('Transcription'), { key: 'Enter', isComposing: true });
-    expect(get(store).project!.annotations).toHaveLength(0);
   });
 
   it('binds integer boundaries and shows the configured time format', async () => {

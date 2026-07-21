@@ -81,4 +81,10 @@ describe('Task 15 release configuration', () => {
     expect(css).toMatch(/\.waveform,\s*\.waveform-slot\s*\{[^}]*height:\s*clamp\(190px,\s*28vh,\s*300px\)/s);
     expect(css).not.toMatch(/\.waveform,\s*\.waveform-slot\s*\{\s*height:\s*190px\s*;/s);
   });
+
+  it('keeps the annotation column editor bounded above a scrollable list', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+
+    expect(css).toMatch(/\.annotation-column\s*\{[^}]*grid-template-rows:\s*minmax\(7\.5rem,\s*auto\)\s+minmax\(0,\s*1fr\)/s);
+  });
 });

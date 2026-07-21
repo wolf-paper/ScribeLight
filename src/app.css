@@ -297,6 +297,19 @@ input[type="range"]:disabled::-webkit-slider-thumb { background: var(--color-dis
 .waveform,
 .waveform-slot { height: clamp(190px, 28vh, 300px); background: var(--color-canvas); }
 
+.annotation-column {
+  display: grid;
+  grid-template-rows: minmax(7.5rem, auto) minmax(0, 1fr);
+  gap: .7rem;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.active-text-editor { min-width: 0; color: var(--color-text-primary); background: var(--color-panel); border: 1px solid var(--color-border); border-radius: .35rem; }
+.active-text-editor h2 { margin: 0; padding: .55rem .75rem; background: var(--color-toolbar); border-bottom: 1px solid var(--color-border); font-size: .9rem; }
+.active-text-editor fieldset { margin: 0; padding: .65rem .75rem; border: 0; }
+.active-text-editor textarea { width: 100%; min-height: 4.5rem; resize: vertical; }
+
 .annotation-dashboard {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
