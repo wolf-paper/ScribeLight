@@ -81,6 +81,7 @@
   let transitionOwner: number | null = null;
   let transitionBusy = $state(false);
   let previewAnnotationId = $state<string | null>(null);
+  let dashboardHandle = $state<AnnotationDashboard | null>(null);
   let settingsBusy = $state(false);
   let settingsOpen = $state(false);
   let palette = $state<PaletteId>(loadPalette(getBrowserStorage()));
@@ -758,7 +759,11 @@
       />
       <div class="lower-workspace">
         <div class="annotation-column">
-          <ActiveTextEditor store={projectStore} disabled={transitionBusy} />
+          <ActiveTextEditor
+            store={projectStore}
+            disabled={transitionBusy}
+            onsubmit={() => dashboardHandle?.submitDraft()}
+          />
           <AnnotationTable
             annotations={tableAnnotations}
             activeId={project.activeAnnotationId}
@@ -769,7 +774,7 @@
             onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
           />
         </div>
-        <AnnotationDashboard store={projectStore} disabled={transitionBusy} />
+        <AnnotationDashboard bind:this={dashboardHandle} store={projectStore} disabled={transitionBusy} />
       </div>
     </div>
   {:else}

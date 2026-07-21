@@ -66,14 +66,14 @@
     return true;
   }
 
-  const submit = () => {
-    if (!disabled && completeBoundaryEdit()) void store.commitDraft();
-  };
+  export function submitDraft(): void {
+    if (completeBoundaryEdit()) void store.commitDraft();
+  }
 
   function onEditorKeydown(event: KeyboardEvent) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
-    submit();
+    submitDraft();
   }
 
   function eventTypeChanged(event: Event) {
@@ -230,7 +230,7 @@
       </div>
 
       <div class="actions">
-        <button type="button" on:click={submit}>{project.activeAnnotationId ? 'Update annotation' : 'Add annotation'}</button>
+        <button type="button" on:click={submitDraft}>{project.activeAnnotationId ? 'Update annotation' : 'Add annotation'}</button>
         {#if project.activeAnnotationId}
           <button type="button" on:click={() => {
             if (!disabled) void store.removeAnnotation(project.activeAnnotationId!);

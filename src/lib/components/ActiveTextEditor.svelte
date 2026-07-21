@@ -3,11 +3,12 @@
 
   export let store: ProjectStore;
   export let disabled = false;
+  export let onsubmit: () => void;
 
   function submit(event: KeyboardEvent): void {
     if (disabled || event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
     event.preventDefault();
-    void store.commitDraft();
+    onsubmit();
   }
 
   function update(event: Event): void {

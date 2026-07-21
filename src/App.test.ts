@@ -302,6 +302,53 @@ describe('App', () => {
     })));
   });
 
+  it('validates pending raw boundaries before transcription Enter can commit or persist', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const bridge = makeFakeBridge({ identity });
+    renderApp({
+      bridge,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav' },
+      id: () => 'coordinated-event'
+    });
+    await openClip();
+
+    const start = screen.getByLabelText('Start milliseconds');
+    const end = screen.getByLabelText('End milliseconds');
+    await fireEvent.input(end, { target: { value: '1000' } });
+    await fireEvent.input(start, { target: { value: '100' } });
+    await fireEvent.change(start);
+    await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
+
+    await replaceSequentially(start, '3000');
+    await fireEvent.change(start);
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
+    const transcription = screen.getByRole('textbox', { name: 'Transcription' });
+    await fireEvent.input(transcription, { target: { value: 'must wait for valid boundaries' } });
+    bridge.saveProject.mockClear();
+
+    await fireEvent.keyDown(transcription, { key: 'Enter' });
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Saved annotations').querySelectorAll('.annotation-row')).toHaveLength(0);
+    expect(bridge.saveProject).not.toHaveBeenCalled();
+    expect(start).toHaveValue(3000);
+    expect(end).toHaveValue(1000);
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
+
+    await replaceSequentially(end, '4000');
+    await fireEvent.keyDown(transcription, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('must wait for valid boundaries'));
+    await waitFor(() => expect(bridge.saveProject).toHaveBeenCalledWith(expect.objectContaining({
+      activeAnnotationId: 'coordinated-event',
+      activeSelection: { startMs: 3_000, endMs: 4_000 },
+      annotations: [expect.objectContaining({
+        id: 'coordinated-event', startMs: 3_000, endMs: 4_000,
+        transcription: 'must wait for valid boundaries'
+      })]
+    })));
+    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
+  });
+
   it('normalizes a stale recovered selection to the newer valid editor boundaries on reopen', async () => {
     const identity = fakeIdentity('clip.wav', 10_000);
     const restored = createProject(identity);

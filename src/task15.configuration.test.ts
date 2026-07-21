@@ -111,5 +111,7 @@ describe('Task 15 release configuration', () => {
     expect(readme).toContain('passive waveform annotations');
     expect(readme).toContain('visual preview');
     expect(readme).toContain('row activation');
+    expect(readme).toContain('[Transcription and Waveform QoL Design](docs/superpowers/specs/2026-07-21-transcription-waveform-qol-design.md)');
+    expect(readme).toContain('supersedes the editor, saved-annotation list, and waveform-interaction sections of that UI rework design');
   });
 });

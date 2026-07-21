@@ -17,21 +17,24 @@ function setupStore(): ProjectStore {
 }
 
 describe('ActiveTextEditor', () => {
-  it('updates and submits the active transcription', async () => {
+  it('updates the active transcription and delegates plain Enter submission', async () => {
     const store = setupStore();
-    render(ActiveTextEditor, { store });
+    const onsubmit = vi.fn();
+    render(ActiveTextEditor, { store, onsubmit });
     const editor = screen.getByRole('textbox', { name: 'Transcription' });
 
     expect(screen.getByRole('region', { name: 'Transcription editor' })).toContainElement(editor);
     await fireEvent.input(editor, { target: { value: 'updated text' } });
     expect(get(store).project?.draft.transcription).toBe('updated text');
     await fireEvent.keyDown(editor, { key: 'Enter' });
-    expect(get(store).project?.annotations).toHaveLength(1);
+    expect(onsubmit).toHaveBeenCalledOnce();
+    expect(get(store).project?.annotations).toHaveLength(0);
   });
 
   it('lets Shift+Enter insert a line break without submitting', async () => {
     const store = setupStore();
-    render(ActiveTextEditor, { store });
+    const onsubmit = vi.fn();
+    render(ActiveTextEditor, { store, onsubmit });
     const editor = screen.getByRole('textbox', { name: 'Transcription' });
     const shiftEnter = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, cancelable: true });
 
@@ -39,22 +42,26 @@ describe('ActiveTextEditor', () => {
     await fireEvent.input(editor, { target: { value: 'first\nsecond' } });
 
     expect(shiftEnter.defaultPrevented).toBe(false);
+    expect(onsubmit).not.toHaveBeenCalled();
     expect(get(store).project?.annotations).toHaveLength(0);
     expect(get(store).project?.draft.transcription).toBe('first\nsecond');
   });
 
   it('does not submit an IME composition confirmation', async () => {
     const store = setupStore();
-    render(ActiveTextEditor, { store });
+    const onsubmit = vi.fn();
+    render(ActiveTextEditor, { store, onsubmit });
 
     await fireEvent.keyDown(screen.getByRole('textbox', { name: 'Transcription' }), { key: 'Enter', isComposing: true });
 
+    expect(onsubmit).not.toHaveBeenCalled();
     expect(get(store).project?.annotations).toHaveLength(0);
   });
 
   it('disables editing and submission when disabled', async () => {
     const store = setupStore();
-    render(ActiveTextEditor, { store, disabled: true });
+    const onsubmit = vi.fn();
+    render(ActiveTextEditor, { store, disabled: true, onsubmit });
     const editor = screen.getByRole('textbox', { name: 'Transcription' });
 
     expect(editor).toBeDisabled();
@@ -62,6 +69,7 @@ describe('ActiveTextEditor', () => {
     await fireEvent.keyDown(editor, { key: 'Enter' });
 
     expect(get(store).project?.draft.transcription).toBe('draft text');
+    expect(onsubmit).not.toHaveBeenCalled();
     expect(get(store).project?.annotations).toHaveLength(0);
   });
 });

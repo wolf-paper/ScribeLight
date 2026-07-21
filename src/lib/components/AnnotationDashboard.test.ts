@@ -95,6 +95,42 @@ describe('AnnotationDashboard', () => {
     expect(screen.getByText(/loop updates when both boundaries form a valid range/i)).toBeInTheDocument();
   });
 
+  it('exports a validating submission method for raw boundary edits', async () => {
+    const saveProject = vi.fn(async () => undefined);
+    const store = new ProjectStore({ saveProject }, () => 'submitted-event');
+    const project = createProject({ canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 });
+    store.open(project);
+    store.patchDraft({ startMs: 10, endMs: 20, transcription: 'submitted text' });
+    const view = render(AnnotationDashboard, { store });
+
+    await replaceSequentially(screen.getByLabelText('Start milliseconds'), '30');
+    view.component.submitDraft();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
+    expect(get(store).project?.annotations).toHaveLength(0);
+
+    await replaceSequentially(screen.getByLabelText('End milliseconds'), '40');
+    view.component.submitDraft();
+    await waitFor(() => expect(get(store).project?.annotations).toHaveLength(1));
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 30, endMs: 40 },
+      annotations: [expect.objectContaining({ id: 'submitted-event', startMs: 30, endMs: 40 })]
+    });
+  });
+
+  it('routes Notes plain Enter through raw boundary validation', async () => {
+    const store = setup();
+    await replaceSequentially(screen.getByLabelText('Start milliseconds'), '30');
+
+    await fireEvent.keyDown(screen.getByLabelText('Notes'), { key: 'Enter' });
+    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
+    expect(get(store).project?.annotations).toHaveLength(0);
+
+    await replaceSequentially(screen.getByLabelText('End milliseconds'), '40');
+    await fireEvent.keyDown(screen.getByLabelText('Notes'), { key: 'Enter' });
+    await waitFor(() => expect(get(store).project?.annotations).toHaveLength(1));
+    expect(get(store).project?.activeSelection).toEqual({ startMs: 30, endMs: 40 });
+  });
+
   it('retains raw boundary edits across unrelated project updates but resets for a new selection', async () => {
     const store = setup();
     store.setSelection({ startMs: 10, endMs: 20 });
