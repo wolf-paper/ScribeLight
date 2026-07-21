@@ -122,6 +122,7 @@ export function browserTestProps() {
     __LIGHTSCRIBE_LAST_EXPORT__: BrowserExportRecord | null;
   };
   const nativeCalls: NativeCall[] = [];
+  let saveProjectCalls = 0;
   browserGlobal.__LIGHTSCRIBE_LAST_EXPORT__ = null;
   const persist = () => sessionStorage.setItem(key, JSON.stringify(state));
   const updateSnapshot = (patch: Partial<PlaybackSnapshot>) => {
@@ -131,6 +132,7 @@ export function browserTestProps() {
 
   const bridge: NativeBridge = {
     saveProject: async (project) => {
+      saveProjectCalls += 1;
       state = { ...state, saved: structuredClone(project) };
       persist();
     },
@@ -171,6 +173,7 @@ export function browserTestProps() {
 
   const testApi = {
     marker,
+    get saveProjectCalls() { return saveProjectCalls; },
     get savedProject() { return state.saved ? structuredClone(state.saved) : null; },
     get snapshot() { return structuredClone(state.snapshot); },
     get nativeCalls() { return structuredClone(nativeCalls); }

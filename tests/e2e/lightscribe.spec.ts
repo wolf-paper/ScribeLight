@@ -135,20 +135,50 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   const firstRow = annotations.locator('.annotation-row').first();
   const stateBeforeHover = await page.evaluate(() => {
     const testState = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { savedProject: Project | null; nativeCalls: Array<{ command: string }> };
+      __LIGHTSCRIBE_TEST__: {
+        saveProjectCalls: number;
+        savedProject: Project | null;
+        nativeCalls: Array<{ command: string }>;
+      };
     }).__LIGHTSCRIBE_TEST__;
-    return { project: testState.savedProject, nativeCalls: testState.nativeCalls };
+    return {
+      saveProjectCalls: testState.saveProjectCalls,
+      project: testState.savedProject,
+      nativeCalls: testState.nativeCalls
+    };
   });
+  const boundariesBeforeHover = {
+    start: await page.getByLabel('Start milliseconds').inputValue(),
+    end: await page.getByLabel('End milliseconds').inputValue()
+  };
   await firstRow.hover();
   await expect(previewRegions).toHaveCount(1);
-  await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
-  await expect(page.getByLabel('End milliseconds')).toHaveValue('1000');
-  expect(await page.evaluate(() => {
+  await page.waitForTimeout(400);
+  const stateAfterHover = await page.evaluate(() => {
     const testState = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { savedProject: Project | null; nativeCalls: Array<{ command: string }> };
+      __LIGHTSCRIBE_TEST__: {
+        saveProjectCalls: number;
+        savedProject: Project | null;
+        nativeCalls: Array<{ command: string }>;
+      };
     }).__LIGHTSCRIBE_TEST__;
-    return { project: testState.savedProject, nativeCalls: testState.nativeCalls };
-  })).toEqual(stateBeforeHover);
+    return {
+      saveProjectCalls: testState.saveProjectCalls,
+      project: testState.savedProject,
+      nativeCalls: testState.nativeCalls
+    };
+  });
+  const boundariesAfterHover = {
+    start: await page.getByLabel('Start milliseconds').inputValue(),
+    end: await page.getByLabel('End milliseconds').inputValue()
+  };
+  expect.soft(stateAfterHover.saveProjectCalls).toBe(stateBeforeHover.saveProjectCalls);
+  expect.soft(stateAfterHover.project).toEqual(stateBeforeHover.project);
+  expect.soft(stateAfterHover.nativeCalls).toEqual(stateBeforeHover.nativeCalls);
+  expect.soft(boundariesAfterHover).toEqual(boundariesBeforeHover);
+  expect.soft(await annotations.locator('.annotation-row').evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute('aria-current'))
+  )).toEqual([null, null]);
   await page.getByText('Ctrl + wheel to zoom').hover();
   await expect(previewRegions).toHaveCount(0);
 
@@ -346,6 +376,6 @@ test('recovers the saved project after a renderer reopen', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-palette', 'crimson-scope');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
-  expect(browserErrors).toEqual([]);
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');
+  expect(browserErrors).toEqual([]);
 });
