@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import type { PeakData } from '../bridge/native';
   import type { Selection, TimeDisplayFormat } from '../domain/types';
+  import type { WaveformAnnotation } from '../waveform/wavesurferAdapter';
   import { timelineContentWidth, zoomAtPointer } from '../domain/timeline';
   import LoopSelectionBar from './LoopSelectionBar.svelte';
   import TimeRuler from './TimeRuler.svelte';
@@ -13,6 +14,8 @@
   export let onchange: (selection: Selection) => void;
   export let peaks: PeakData | null = null;
   export let playheadMs = 0;
+  export let annotations: readonly WaveformAnnotation[] = [];
+  export let previewAnnotationId: string | null = null;
   export let disabled = false;
 
   let viewport: HTMLDivElement;
@@ -94,7 +97,7 @@
         <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
         <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
           {#if peaks}
-            <WaveformView {peaks} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
+            <WaveformView {peaks} {annotations} {previewAnnotationId} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
           {/if}
         </div>
         <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />

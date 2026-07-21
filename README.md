@@ -19,7 +19,7 @@ bun tauri dev
 
 ## Desktop workspace
 
-Lightscribe opens at 1280x800 with a 1280px minimum width. Its dense desktop layout keeps the title and waveform logo in a compact toolbar, gives the waveform the full window width, and places a continuously scrollable Saved annotations list beside the Selection inspector without pagination. Settings owns project speaker and acoustic-tag labels, multiline TSV export policy, and appearance.
+Lightscribe opens at 1280x800 with a 1280px minimum width. Its dense desktop layout keeps the title and waveform logo in a compact toolbar, gives the waveform the full window width, and keeps the active transcription editor above a continuously scrollable Saved annotations list beside the Selection inspector without pagination. Saved ranges appear as passive waveform annotations; pointing to or focusing a list row adds a visual preview without changing the draft, while row activation loads that annotation into the editor. Settings owns project speaker and acoustic-tag labels, multiline TSV export policy, and appearance.
 
 The application-global palette is stored separately from project and TSV data. Ion Magenta is the default, with Arctic Steel, Ultraviolet Grid, and Crimson Scope also available. The complete workspace, palette, interaction, and accessibility contract is recorded in the [Lightscribe UI Rework Design](docs/superpowers/specs/2026-07-19-lightscribe-ui-rework-design.md); the original [product specification](docs/superpowers/specs/2026-07-18-lightscribe-design.md) remains authoritative for audio, persistence, and interchange behavior.
 

@@ -5,13 +5,16 @@
   import {
     createWaveformAdapter,
     type WaveformAdapter,
-    type WaveformAdapterFactory
+    type WaveformAdapterFactory,
+    type WaveformAnnotation
   } from '../waveform/wavesurferAdapter';
 
   export let peaks: PeakData;
   export let selection: Selection | null;
   export let playheadMs = 0;
   export let pixelsPerSecond = 100;
+  export let annotations: readonly WaveformAnnotation[] = [];
+  export let previewAnnotationId: string | null = null;
   export let onchange: (selection: Selection) => void;
   export let createAdapter: WaveformAdapterFactory = createWaveformAdapter;
 
@@ -39,6 +42,8 @@
 
   $: if (mounted && peaks !== activePeaks) replaceAdapter(peaks);
   $: if (mounted && adapter) {
+    adapter.setAnnotations(annotations);
+    adapter.setPreviewAnnotation(previewAnnotationId);
     adapter.setSelection(selection);
     adapter.setPlayhead(playheadMs);
     adapter.setZoom(pixelsPerSecond);

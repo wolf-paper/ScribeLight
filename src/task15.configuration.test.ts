@@ -95,4 +95,21 @@ describe('Task 15 release configuration', () => {
 
     expect(css).toMatch(/\.annotation-column\s*\{[^}]*grid-template-rows:\s*minmax\(7\.5rem,\s*auto\)\s+minmax\(0,\s*1fr\)/s);
   });
+
+  it('keeps the documented annotation preview flow connected through the production component tree', () => {
+    const app = readFileSync('src/App.svelte', 'utf8');
+    const timeline = readFileSync('src/lib/components/TimelineWorkspace.svelte', 'utf8');
+    const waveform = readFileSync('src/lib/components/WaveformView.svelte', 'utf8');
+    const readme = readFileSync('README.md', 'utf8');
+
+    expect(app).toContain('let previewAnnotationId = $state<string | null>(null);');
+    expect(app).toContain('onpreview={(id) =>');
+    expect(timeline).toContain('<WaveformView {peaks} {annotations} {previewAnnotationId}');
+    expect(waveform).toContain('adapter.setAnnotations(annotations);');
+    expect(waveform).toContain('adapter.setPreviewAnnotation(previewAnnotationId);');
+    expect(readme).toContain('active transcription editor');
+    expect(readme).toContain('passive waveform annotations');
+    expect(readme).toContain('visual preview');
+    expect(readme).toContain('row activation');
+  });
 });

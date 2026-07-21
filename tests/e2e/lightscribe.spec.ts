@@ -17,6 +17,15 @@ async function openFixture(page: Page, story: string, reset = true): Promise<voi
   await expect(page.getByRole('alert', { name: 'Application error' })).toHaveCount(0);
 }
 
+function collectBrowserErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`console: ${message.text()}`);
+  });
+  page.on('pageerror', (error) => errors.push(`page: ${error.message}`));
+  return errors;
+}
+
 async function timelineMetrics(page: Page, pointerX: number) {
   return page.getByTestId('timeline-viewport').evaluate((viewport, x) => {
     const content = viewport.querySelector<HTMLElement>('[data-testid="timeline-content"]');
@@ -33,6 +42,7 @@ async function timelineMetrics(page: Page, pointerX: number) {
 test.use({ viewport: { width: 1280, height: 800 } });
 
 test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 export story', async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
   await openFixture(page, 'complete-story');
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -113,10 +123,39 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   }
   await expect(annotations.locator('.annotation-row')).toHaveCount(2);
 
-  await annotations.locator('.annotation-row').first().click();
+  const editorBounds = await page.locator('.active-text-editor').boundingBox();
+  const listBounds = await page.locator('.annotation-table').boundingBox();
+  if (!editorBounds || !listBounds) throw new Error('annotation workspace has no layout bounds');
+  expect(editorBounds.y + editorBounds.height).toBeLessThanOrEqual(listBounds.y);
+
+  const passiveRegions = page.locator('[data-lightscribe-region="annotation"]');
+  const previewRegions = page.locator('[data-lightscribe-region="preview"]');
+  await expect(passiveRegions).toHaveCount(2);
+  await expect(previewRegions).toHaveCount(0);
+  const firstRow = annotations.locator('.annotation-row').first();
+  const stateBeforeHover = await page.evaluate(() => {
+    const testState = (globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { savedProject: Project | null; nativeCalls: Array<{ command: string }> };
+    }).__LIGHTSCRIBE_TEST__;
+    return { project: testState.savedProject, nativeCalls: testState.nativeCalls };
+  });
+  await firstRow.hover();
+  await expect(previewRegions).toHaveCount(1);
+  await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
+  await expect(page.getByLabel('End milliseconds')).toHaveValue('1000');
+  expect(await page.evaluate(() => {
+    const testState = (globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { savedProject: Project | null; nativeCalls: Array<{ command: string }> };
+    }).__LIGHTSCRIBE_TEST__;
+    return { project: testState.savedProject, nativeCalls: testState.nativeCalls };
+  })).toEqual(stateBeforeHover);
+  await page.getByText('Ctrl + wheel to zoom').hover();
+  await expect(previewRegions).toHaveCount(0);
+
+  await firstRow.click();
   await expect(page.getByLabel('Start milliseconds')).toHaveValue('1000');
   await expect(page.getByLabel('End milliseconds')).toHaveValue('2000');
-  const selectedTranscription = page.getByLabel('Transcription');
+  const selectedTranscription = page.getByRole('textbox', { name: 'Transcription' });
   const originalTranscription = await selectedTranscription.inputValue();
   expect(originalTranscription).not.toBe('');
   await expect(page.getByRole('button', { name: 'Update annotation' })).toBeVisible();
@@ -207,7 +246,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   });
   expect(Math.abs(highlightedRange.startMs - 3_000)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
   expect(Math.abs(highlightedRange.endMs - 4_000)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
-  const transcription = page.getByLabel('Transcription');
+  const transcription = page.getByRole('textbox', { name: 'Transcription' });
   await transcription.fill('もう一度');
   await transcription.press('Enter');
   await expect(annotations.locator('.annotation-row')).toHaveCount(3);
@@ -287,9 +326,11 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
       tags: []
     }
   ]);
+  expect(browserErrors).toEqual([]);
 });
 
 test('recovers the saved project after a renderer reopen', async ({ page }) => {
+  const browserErrors = collectBrowserErrors(page);
   await openFixture(page, 'recovery');
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('radio', { name: /Crimson Scope/ }).click();
@@ -297,13 +338,14 @@ test('recovers the saved project after a renderer reopen', async ({ page }) => {
   await page.getByRole('button', { name: 'Close settings' }).click();
   await page.getByLabel('Start milliseconds').fill('5000');
   await page.getByLabel('End milliseconds').fill('6000');
-  await page.getByLabel('Transcription').fill('再開');
-  await page.getByLabel('Transcription').press('Enter');
+  await page.getByRole('textbox', { name: 'Transcription' }).fill('再開');
+  await page.getByRole('textbox', { name: 'Transcription' }).press('Enter');
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');
 
   await page.goto(fixtureUrl('recovery'));
   await expect(page.locator('html')).toHaveAttribute('data-palette', 'crimson-scope');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
+  expect(browserErrors).toEqual([]);
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');
 });

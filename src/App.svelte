@@ -80,6 +80,7 @@
   let audioOpenQueue: Promise<void> = Promise.resolve();
   let transitionOwner: number | null = null;
   let transitionBusy = $state(false);
+  let previewAnnotationId = $state<string | null>(null);
   let settingsBusy = $state(false);
   let settingsOpen = $state(false);
   let palette = $state<PaletteId>(loadPalette(getBrowserStorage()));
@@ -98,6 +99,9 @@
 
   let project = $derived($projectStore.project);
   let playback = $derived($audioSession);
+  let waveformAnnotations = $derived(
+    project?.annotations.map(({ id, startMs, endMs }) => ({ id, startMs, endMs })) ?? []
+  );
   let filename = $derived(project ? basename(project.audioIdentity.canonicalPath) : null);
   let analysisPercent = $derived.by(() => {
     if (!analysisProgress) return null;
@@ -133,6 +137,12 @@
     const nativeError = typeof playback.state === 'object' ? playback.state.error : null;
     if (nativeError && nativeError !== lastPlaybackError) persistentError = nativeError;
     lastPlaybackError = nativeError;
+  });
+
+  $effect(() => {
+    if (transitionBusy || !project?.annotations.some(({ id }) => id === previewAnnotationId)) {
+      previewAnnotationId = null;
+    }
   });
 
   $effect(() => {
@@ -741,6 +751,8 @@
         selection={project.activeSelection}
         onchange={setSelection}
         {peaks}
+        annotations={waveformAnnotations}
+        {previewAnnotationId}
         playheadMs={playback.positionMs}
         disabled={transitionBusy}
       />
@@ -752,6 +764,7 @@
             activeId={project.activeAnnotationId}
             format={project.displayFormat}
             disabled={transitionBusy}
+            onpreview={(id) => { if (!transitionBusy) previewAnnotationId = id; }}
             onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
             onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
           />

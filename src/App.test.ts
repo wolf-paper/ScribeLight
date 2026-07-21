@@ -105,16 +105,24 @@ describe('App', () => {
     expect(screen.queryByRole('region', { name: 'Speaker manager' })).not.toBeInTheDocument();
   });
 
-  it('shows Add for a new selection and loads a selected saved annotation for Update', async () => {
+  it('previews overlapping saved annotations without mutation, activates on click, and clears removed previews', async () => {
     const identity = fakeIdentity('clip.wav', 10_000);
     const restored = createProject(identity);
     restored.annotations = [{
       ...restored.draft,
-      id: 'saved-event',
+      id: 'first',
       startMs: 1_000,
       endMs: 2_000,
-      transcription: 'Saved transcription',
+      transcription: 'First transcription',
       acousticTagIds: [restored.acousticTags[0].id],
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }, {
+      ...restored.draft,
+      id: 'second',
+      startMs: 1_500,
+      endMs: 2_500,
+      transcription: 'Second transcription',
       createdAt: '2026-01-01T00:00:00Z',
       updatedAt: '2026-01-01T00:00:00Z'
     }];
@@ -139,13 +147,42 @@ describe('App', () => {
     expect(lowerWorkspace?.querySelector('.annotation-column')?.children[0]).toHaveClass('active-text-editor');
     expect(lowerWorkspace?.querySelector('.annotation-column')?.children[1]).toHaveClass('annotation-table');
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('row', { name: 'Activate annotation Saved transcription' }));
+    expect(waveformSpies.setAnnotations).toHaveBeenCalledWith([
+      { id: 'first', startMs: 1_000, endMs: 2_000 },
+      { id: 'second', startMs: 1_500, endMs: 2_500 }
+    ]);
 
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_000);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(2_000);
-    expect(screen.getByLabelText('Transcription')).toHaveValue('Saved transcription');
+    const firstRow = screen.getByRole('row', { name: 'Activate annotation First transcription' });
+    const secondRow = screen.getByRole('row', { name: 'Activate annotation Second transcription' });
+    const loopCallsBeforeHover = bridge.audioSetLoop.mock.calls.length;
+    const saveCallsBeforeHover = bridge.saveProject.mock.calls.length;
+    const savedProjectsBeforeHover = structuredClone(bridge.savedProjects);
+    await fireEvent.pointerEnter(secondRow);
+
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second'));
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(3_000);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(4_000);
+    expect(firstRow).not.toHaveAttribute('aria-current');
+    expect(secondRow).not.toHaveAttribute('aria-current');
+    expect(bridge.audioSetLoop).toHaveBeenCalledTimes(loopCallsBeforeHover);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(saveCallsBeforeHover);
+    expect(bridge.savedProjects).toEqual(savedProjectsBeforeHover);
+
+    await fireEvent.pointerLeave(secondRow, { relatedTarget: null });
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
+    await fireEvent.click(secondRow);
+
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_500);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(2_500);
+    expect(screen.getByLabelText('Transcription')).toHaveValue('Second transcription');
     expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
-    expect(screen.getByRole('row', { name: 'Activate annotation Saved transcription' })).toHaveAttribute('aria-current', 'true');
+    expect(secondRow).toHaveAttribute('aria-current', 'true');
+
+    await fireEvent.pointerEnter(firstRow);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove annotation First transcription' }));
+    await waitFor(() => expect(firstRow).not.toBeInTheDocument());
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
   });
 
   it('completes open, select/loop, annotate/update, reopen, import, and export using real stores', async () => {

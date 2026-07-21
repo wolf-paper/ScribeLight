@@ -116,28 +116,34 @@ export function createWaveformAdapter(
   const stopDrag = regions.enableDragSelection(regionOptions);
 
   const markSelection = (next: ReturnType<typeof regions.addRegion>): void => {
-    next.element.dataset.lightscribeRegion = 'selection';
-    next.element.style.zIndex = selectionLayer;
+    const element = next.element;
+    if (!element) return;
+    element.dataset.lightscribeRegion = 'selection';
+    element.style.zIndex = selectionLayer;
   };
 
   const markAnnotation = (
     next: ReturnType<typeof regions.addRegion>,
     annotationId: string
   ): void => {
-    next.element.dataset.lightscribeRegion = 'annotation';
-    next.element.dataset.annotationId = annotationId;
-    next.element.style.pointerEvents = 'none';
-    next.element.style.zIndex = passiveLayer;
+    const element = next.element;
+    if (!element) return;
+    element.dataset.lightscribeRegion = 'annotation';
+    element.dataset.annotationId = annotationId;
+    element.style.pointerEvents = 'none';
+    element.style.zIndex = passiveLayer;
   };
 
   const markPreview = (
     next: ReturnType<typeof regions.addRegion>,
     annotationId: string
   ): void => {
-    next.element.dataset.lightscribeRegion = 'preview';
-    next.element.dataset.annotationId = annotationId;
-    next.element.style.pointerEvents = 'none';
-    next.element.style.zIndex = previewLayer;
+    const element = next.element;
+    if (!element) return;
+    element.dataset.lightscribeRegion = 'preview';
+    element.dataset.annotationId = annotationId;
+    element.style.pointerEvents = 'none';
+    element.style.zIndex = previewLayer;
   };
 
   const isManagedRegion = (next: ReturnType<typeof regions.addRegion>): boolean => {

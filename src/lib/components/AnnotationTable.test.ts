@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import AnnotationTable, { type AnnotationRow } from './AnnotationTable.svelte';
 
 const annotations: AnnotationRow[] = [
@@ -21,16 +21,16 @@ function renderTable({
   activeId = null,
   disabled = false,
   format = 'clock',
-  select = vi.fn(),
-  remove = vi.fn(),
-  preview = vi.fn()
+  select = vi.fn<(id: string) => void>(),
+  remove = vi.fn<(id: string) => void>(),
+  preview = vi.fn<(id: string | null) => void>()
 }: {
   activeId?: string | null;
   disabled?: boolean;
   format?: 'clock' | 'seconds';
-  select?: ReturnType<typeof vi.fn>;
-  remove?: ReturnType<typeof vi.fn>;
-  preview?: ReturnType<typeof vi.fn>;
+  select?: Mock<(id: string) => void>;
+  remove?: Mock<(id: string) => void>;
+  preview?: Mock<(id: string | null) => void>;
 } = {}) {
   const view = render(AnnotationTable, {
     annotations,

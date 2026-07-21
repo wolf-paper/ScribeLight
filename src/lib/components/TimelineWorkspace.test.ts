@@ -1,6 +1,20 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import TimelineWorkspace from './TimelineWorkspace.svelte';
+import { fakePeaks } from '../../test/fakeBridge';
+
+const waveformAdapter = vi.hoisted(() => ({
+  setSelection: vi.fn(),
+  setAnnotations: vi.fn(),
+  setPreviewAnnotation: vi.fn(),
+  setPlayhead: vi.fn(),
+  setZoom: vi.fn(),
+  destroy: vi.fn()
+}));
+
+vi.mock('../waveform/wavesurferAdapter', () => ({
+  createWaveformAdapter: () => waveformAdapter
+}));
 
 function renderTimeline(selection = { startMs: 100, endMs: 200 }) {
   const onchange = vi.fn();
@@ -45,6 +59,44 @@ describe('TimelineWorkspace', () => {
     expect(layers).toEqual(['top-ruler', 'loop-selection', 'waveform', 'bottom-ruler']);
     expect(content.querySelectorAll('.time-ruler')).toHaveLength(2);
     expect(Array.from(content.querySelectorAll<HTMLElement>('.time-ruler')).map((ruler) => ruler.style.width)).toEqual(['1000px', '1000px']);
+  });
+
+  it('forwards saved annotations and preview state without changing layers or Ctrl+wheel zoom', async () => {
+    const annotations = [
+      { id: 'a', startMs: 1_000, endMs: 2_000 },
+      { id: 'b', startMs: 1_500, endMs: 2_500 }
+    ];
+    const onchange = vi.fn();
+    render(TimelineWorkspace, {
+      durationMs: 10_000,
+      format: 'seconds',
+      selection: { startMs: 100, endMs: 200 },
+      onchange,
+      peaks: fakePeaks(10_000),
+      annotations,
+      previewAnnotationId: 'b'
+    });
+    const viewport = screen.getByTestId('timeline-viewport');
+    Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 500 });
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({
+      bottom: 0, height: 0, left: 0, right: 500, top: 0, width: 500, x: 0, y: 0,
+      toJSON: () => ({})
+    });
+
+    await waitFor(() => {
+      expect(waveformAdapter.setAnnotations).toHaveBeenCalledWith(annotations);
+      expect(waveformAdapter.setPreviewAnnotation).toHaveBeenCalledWith('b');
+    });
+    expect(Array.from(screen.getByTestId('timeline-content').children)
+      .map((element) => element.getAttribute('data-timeline-layer')))
+      .toEqual(['top-ruler', 'loop-selection', 'waveform', 'bottom-ruler']);
+
+    const zoomWheel = new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, clientX: 250, ctrlKey: true, deltaY: -100
+    });
+    viewport.dispatchEvent(zoomWheel);
+    expect(zoomWheel.defaultPrevented).toBe(true);
+    await waitFor(() => expect(screen.getByTestId('timeline-content')).toHaveStyle({ width: '1250px' }));
   });
 
   it('offers separate controls and clamps integer-millisecond handle and body drags', async () => {
