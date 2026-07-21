@@ -137,13 +137,13 @@ describe('App', () => {
     expect(lowerWorkspace?.querySelector('.annotation-column')?.children[0]).toHaveClass('active-text-editor');
     expect(lowerWorkspace?.querySelector('.annotation-column')?.children[1]).toHaveClass('annotation-table');
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: 'Edit annotation Saved transcription' }));
+    await fireEvent.click(screen.getByRole('row', { name: 'Activate annotation Saved transcription' }));
 
     expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_000);
     expect(screen.getByLabelText('End milliseconds')).toHaveValue(2_000);
     expect(screen.getByLabelText('Transcription')).toHaveValue('Saved transcription');
     expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit annotation Saved transcription' })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('row', { name: 'Activate annotation Saved transcription' })).toHaveAttribute('aria-current', 'true');
   });
 
   it('completes open, select/loop, annotate/update, reopen, import, and export using real stores', async () => {

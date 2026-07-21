@@ -113,7 +113,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   }
   await expect(annotations.locator('.annotation-row')).toHaveCount(2);
 
-  await annotations.locator('.annotation-row').first().getByRole('button', { name: /Edit annotation/ }).click();
+  await annotations.locator('.annotation-row').first().click();
   await expect(page.getByLabel('Start milliseconds')).toHaveValue('1000');
   await expect(page.getByLabel('End milliseconds')).toHaveValue('2000');
   const selectedTranscription = page.getByLabel('Transcription');

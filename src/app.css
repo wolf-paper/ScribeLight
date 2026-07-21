@@ -363,6 +363,10 @@ input[type="range"]:disabled::-webkit-slider-thumb { background: var(--color-dis
 .annotation-row > div { min-width: 0; padding: .5rem .55rem; }
 .annotation-row { align-items: center; border-bottom: 1px solid var(--color-border); }
 .annotation-row:last-child { border-bottom: 0; }
+.annotation-row:not([aria-disabled="true"]) { cursor: pointer; }
+.annotation-row:hover:not([aria-disabled="true"]),
+.annotation-row:focus-visible { background: color-mix(in srgb, var(--color-accent) 10%, var(--color-panel)); }
+.annotation-row:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .annotation-row.active { background: var(--color-selection-wash); box-shadow: inset 3px 0 0 var(--color-accent); }
 .annotation-time,
 .annotation-transcript { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -395,7 +399,6 @@ input[type="range"]:disabled::-webkit-slider-thumb { background: var(--color-dis
 .intelligibility-not_applicable { --status-color: var(--status-not-applicable); }
 .annotation-actions { display: flex; justify-content: flex-start; gap: .35rem; }
 .annotation-actions button { min-height: 1.8rem; padding: .25rem .4rem; background: var(--color-raised); }
-.annotation-actions button:first-child { border-color: var(--color-accent); }
 
 .settings-backdrop { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 2rem; background: var(--color-overlay); }
 .settings-backdrop dialog { display: grid; grid-template-columns: 10rem minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); width: min(54rem, calc(100vw - 4rem)); max-height: calc(100vh - 4rem); margin: auto; padding: 0; overflow: hidden; color: var(--color-text-primary); background: var(--color-panel); border: 1px solid var(--color-border); border-radius: .5rem; box-shadow: 0 1rem 3rem var(--color-shadow); }
