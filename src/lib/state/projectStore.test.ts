@@ -252,6 +252,109 @@ describe('ProjectStore', () => {
     });
   });
 
+  it('starts a new draft from an active annotation while preserving its selection', async () => {
+    const project = createProject(audio);
+    project.annotations.push({
+      ...project.draft,
+      id: 'saved-annotation',
+      startMs: 40,
+      endMs: 80,
+      transcription: 'saved text',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    });
+    const store = new ProjectStore(bridge);
+    store.open(project);
+    store.selectAnnotation('saved-annotation');
+    store.patchDraft({
+      eventType: 'speech',
+      transcription: 'unsaved edit',
+      intelligibility: 'unintelligible',
+      speakerId: project.speakers[1].id,
+      overlap: 'overlap',
+      confidence: 'low',
+      acousticTagIds: [project.acousticTags[0].id],
+      notes: 'discard this metadata'
+    });
+    bridge.saveProject.mockClear();
+
+    store.startNewDraftFromSelection();
+
+    expect(get(store).project).toMatchObject({
+      annotations: [expect.objectContaining({ id: 'saved-annotation', transcription: 'saved text' })],
+      activeAnnotationId: null,
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: {
+        startMs: 40,
+        endMs: 80,
+        eventType: 'speech',
+        transcription: '',
+        intelligibility: 'highly_intelligible',
+        speakerId: project.speakers[0].id,
+        overlap: 'none',
+        confidence: 'high',
+        acousticTagIds: [],
+        notes: ''
+      }
+    });
+    expect(bridge.saveProject).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      activeAnnotationId: null,
+      activeSelection: { startMs: 40, endMs: 80 }
+    }));
+  });
+
+  it('ignores start-new-draft requests that cannot preserve an active saved selection', async () => {
+    const savedProject = () => {
+      const project = createProject(audio);
+      project.annotations.push({
+        ...project.draft,
+        id: 'saved-annotation',
+        startMs: 40,
+        endMs: 80,
+        transcription: 'saved text',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z'
+      });
+      return project;
+    };
+    const expectIgnored = async (project: Project | null, blocked = false) => {
+      const store = new ProjectStore(bridge);
+      if (project) store.open(project);
+      store.setMutationsBlocked(blocked);
+      store.startNewDraftFromSelection();
+      await vi.advanceTimersByTimeAsync(300);
+      expect(bridge.saveProject).not.toHaveBeenCalled();
+      bridge.saveProject.mockClear();
+    };
+
+    await expectIgnored(null);
+
+    const blocked = savedProject();
+    blocked.activeAnnotationId = 'saved-annotation';
+    blocked.activeSelection = { startMs: 40, endMs: 80 };
+    await expectIgnored(blocked, true);
+
+    await expectIgnored(savedProject());
+
+    const missingSelection = savedProject();
+    missingSelection.activeAnnotationId = 'saved-annotation';
+    await expectIgnored(missingSelection);
+
+    for (const activeSelection of [{ startMs: 80, endMs: 40 }, { startMs: 40, endMs: 1_001 }]) {
+      const invalidSelection = savedProject();
+      invalidSelection.activeAnnotationId = 'saved-annotation';
+      invalidSelection.activeSelection = activeSelection;
+      await expectIgnored(invalidSelection);
+    }
+
+    const orphanedActiveAnnotation = savedProject();
+    orphanedActiveAnnotation.activeAnnotationId = 'missing-annotation';
+    orphanedActiveAnnotation.activeSelection = { startMs: 40, endMs: 80 };
+    await expectIgnored(orphanedActiveAnnotation);
+  });
+
   it('removes an annotation and clears it from the editor', async () => {
     const store = new ProjectStore(bridge, () => 'event-1');
     store.open(createProject(audio));
@@ -400,6 +503,42 @@ describe('ProjectStore', () => {
       activeAnnotationId: null,
       activeSelection: null,
       draft: expect.objectContaining({ startMs: 0, endMs: 0, transcription: '' })
+    }));
+  });
+
+  it('persists a new draft transition merged while a committed mutation save is unresolved', async () => {
+    const project = createProject(audio);
+    project.annotations.push({
+      ...project.draft,
+      id: 'saved-annotation',
+      startMs: 40,
+      endMs: 80,
+      transcription: 'saved text',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    });
+    const mutationSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+    store.selectAnnotation('saved-annotation');
+
+    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
+    store.startNewDraftFromSelection();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
+
+    mutationSave.resolve();
+    await expect(mutation).resolves.toBe(true);
+    await vi.runAllTimersAsync();
+
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      displayFormat: 'clock',
+      annotations: [expect.objectContaining({ id: 'saved-annotation', transcription: 'saved text' })],
+      activeAnnotationId: null,
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: expect.objectContaining({ startMs: 40, endMs: 80, transcription: '', notes: '' })
     }));
   });
 

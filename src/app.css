@@ -340,6 +340,12 @@ input[type="range"]:disabled::-webkit-slider-thumb { background: var(--color-dis
 .annotation-dashboard textarea { resize: vertical; }
 .annotation-dashboard .actions { display: flex; gap: .5rem; padding: .7rem .75rem; background: var(--color-toolbar); border-top: 1px solid var(--color-border); }
 .annotation-dashboard .actions button:first-child { flex: 1; border-color: var(--color-accent); }
+.annotation-dashboard .actions .clear-annotation-action {
+  flex: 0 0 2.35rem;
+  min-width: 2.35rem;
+  padding-inline: 0;
+  font-weight: 700;
+}
 .annotation-dashboard #boundary-editing-help { margin: -.3rem 0 0; color: var(--color-text-secondary); font-size: .78rem; }
 .boundary-grid,
 .metadata-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem; }

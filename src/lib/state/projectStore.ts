@@ -186,6 +186,33 @@ export class ProjectStore implements Readable<ProjectState> {
     this.scheduleRecovery();
   }
 
+  startNewDraftFromSelection(): void {
+    if (this.mutationsBlocked) return;
+    const current = get(this.state).project;
+    if (!current?.activeAnnotationId || !current.activeSelection) return;
+    if (!current.annotations.some(({ id }) => id === current.activeAnnotationId)) return;
+    const selection = validDraftSelection(
+      { ...current.draft, ...current.activeSelection },
+      current.audioIdentity.durationMs
+    );
+    if (!selection) return;
+
+    this.markDraftFields(draftFields);
+    this.activeAnnotationRevision += 1;
+    this.annotationSelection = null;
+    this.updateProject((project) => ({
+      ...project,
+      activeAnnotationId: null,
+      activeSelection: selection,
+      draft: {
+        ...emptyDraft(),
+        ...selection,
+        speakerId: project.speakers[0]?.id ?? null
+      }
+    }));
+    this.scheduleRecovery();
+  }
+
   async commitDraft(now = new Date().toISOString()): Promise<boolean> {
     if (this.mutationsBlocked) return false;
     this.cancelRecovery();

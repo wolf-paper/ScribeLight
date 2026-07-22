@@ -230,13 +230,19 @@
       </div>
 
       <div class="actions">
-        <button type="button" on:click={submitDraft}>{project.activeAnnotationId ? 'Update annotation' : 'Add annotation'}</button>
+        <button type="button" on:click={submitDraft}>
+          {project.activeAnnotationId ? 'Update annotation' : 'Add annotation'}
+        </button>
         {#if project.activeAnnotationId}
-          <button type="button" on:click={() => {
-            if (!disabled) void store.removeAnnotation(project.activeAnnotationId!);
-          }}>Remove annotation</button>
+          <button type="button" on:click={() => store.startNewDraftFromSelection()}>Add annotation</button>
         {/if}
-        <button type="button" on:click={() => store.clearDraft()}>Clear</button>
+        <button
+          class="clear-annotation-action"
+          type="button"
+          aria-label="Clear annotation"
+          title="Clear annotation"
+          on:click={() => store.clearDraft()}
+        >X</button>
       </div>
     </fieldset>
   </section>

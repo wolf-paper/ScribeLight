@@ -171,51 +171,43 @@ describe('AnnotationDashboard', () => {
     expect(get(store).project!.draft.acousticTagIds).toEqual([project.acousticTags[0].id]);
   });
 
-  it('removes the active annotation through the inspector and persists a fresh editor state', async () => {
+  it('switches inspector actions between new and active annotation modes', async () => {
     const saveProject = vi.fn(async () => undefined);
     const store = new ProjectStore({ saveProject }, () => 'active-event');
     const project = createProject({ canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 });
     store.open(project);
-    store.patchDraft({ startMs: 10, endMs: 20, transcription: 'remove me' });
+    store.setSelection({ startMs: 50, endMs: 60 });
+    store.patchDraft({ transcription: 'saved text' });
     const view = render(AnnotationDashboard, { store, disabled: false });
 
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear annotation' })).toHaveTextContent(/^X$/);
+    expect(screen.getByRole('button', { name: 'Clear annotation' })).toHaveAttribute('title', 'Clear annotation');
     expect(screen.queryByRole('button', { name: 'Remove annotation' })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Add annotation' }));
-    await waitFor(() => expect(get(store).project!.activeAnnotationId).toBe('active-event'));
-    expect(screen.getByRole('button', { name: 'Remove annotation' })).toBeInTheDocument();
+    await screen.findByRole('button', { name: 'Update annotation' });
+    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove annotation' })).not.toBeInTheDocument();
 
-    saveProject.mockClear();
     await view.rerender({ store, disabled: true });
-    expect(screen.getByRole('button', { name: 'Remove annotation' })).toBeDisabled();
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove annotation' }));
-    expect(saveProject).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeDisabled();
+    const disabledAdd = screen.getByRole('button', { name: 'Add annotation' });
+    expect(disabledAdd).toBeDisabled();
+    disabledAdd.click();
+    expect(get(store).project!.activeAnnotationId).toBe('active-event');
 
     await view.rerender({ store, disabled: false });
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove annotation' }));
-    await waitFor(() => expect(saveProject).toHaveBeenCalledWith(expect.objectContaining({
-      annotations: [],
-      activeAnnotationId: null,
-      activeSelection: null
-    })));
+    const savedBefore = structuredClone(get(store).project!.annotations);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add annotation' }));
     expect(get(store).project).toMatchObject({
-      annotations: [],
+      annotations: savedBefore,
       activeAnnotationId: null,
-      activeSelection: null,
-      draft: {
-        startMs: 0,
-        endMs: 0,
-        eventType: 'speech',
-        transcription: '',
-        intelligibility: 'highly_intelligible',
-        speakerId: project.speakers[0].id,
-        overlap: 'none',
-        confidence: 'high',
-        acousticTagIds: [],
-        notes: ''
-      }
+      activeSelection: { startMs: 50, endMs: 60 },
+      draft: expect.objectContaining({ startMs: 50, endMs: 60, transcription: '', notes: '' })
     });
-    expect(screen.queryByRole('button', { name: 'Remove annotation' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove annotation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update annotation' })).not.toBeInTheDocument();
   });
 
   it('updates, clears, and keeps validation feedback visible', async () => {
@@ -225,7 +217,13 @@ describe('AnnotationDashboard', () => {
     await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '10' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Update annotation' }));
     expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
-    expect(get(store).project!.activeAnnotationId).toBeNull();
+    const clear = screen.getByRole('button', { name: 'Clear annotation' });
+    expect(clear).toHaveTextContent(/^X$/);
+    await fireEvent.click(clear);
+    expect(get(store).project).toMatchObject({
+      activeAnnotationId: null,
+      activeSelection: null,
+      draft: expect.objectContaining({ startMs: 0, endMs: 0 })
+    });
   });
 });
