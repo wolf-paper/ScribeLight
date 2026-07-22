@@ -62,4 +62,8 @@
   .waveform {
     min-height: 80px;
   }
+
+  .waveform ::part(regions-container) {
+    z-index: 4 !important;
+  }
 </style>

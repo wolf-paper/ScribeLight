@@ -97,7 +97,7 @@ export function createWaveformAdapter(
     waveColor: initialPalette.wave,
     progressColor: initialPalette.progress,
     cursorColor: initialPalette.cursor,
-    cursorWidth: 0,
+    cursorWidth: 2,
     normalize: true,
     fillParent: false
   });
