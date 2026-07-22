@@ -542,6 +542,81 @@ describe('ProjectStore', () => {
     }));
   });
 
+  it('preserves start-new selection when removing the active annotation is unresolved', async () => {
+    const project = createProject(audio);
+    const annotation = {
+      ...project.draft,
+      id: 'saved-annotation',
+      startMs: 40,
+      endMs: 80,
+      transcription: 'saved text',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    };
+    project.annotations.push(annotation);
+    project.activeAnnotationId = annotation.id;
+    project.activeSelection = { startMs: annotation.startMs, endMs: annotation.endMs };
+    project.draft = {
+      startMs: annotation.startMs,
+      endMs: annotation.endMs,
+      eventType: annotation.eventType,
+      transcription: annotation.transcription,
+      intelligibility: annotation.intelligibility,
+      speakerId: annotation.speakerId,
+      overlap: annotation.overlap,
+      confidence: annotation.confidence,
+      acousticTagIds: [...annotation.acousticTagIds],
+      notes: annotation.notes
+    };
+    const removalSave = deferred<void>();
+    const savedProjects: Project[] = [];
+    bridge.saveProject.mockImplementation((candidate) => {
+      savedProjects.push(structuredClone(candidate));
+      return savedProjects.length === 1 ? removalSave.promise : Promise.resolve();
+    });
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const removal = store.removeAnnotation('saved-annotation');
+    expect(bridge.saveProject).toHaveBeenCalledOnce();
+    expect(savedProjects[0]).toMatchObject({
+      annotations: [],
+      activeAnnotationId: null,
+      activeSelection: null
+    });
+    store.startNewDraftFromSelection();
+    expect(get(store).project).toMatchObject({
+      activeAnnotationId: null,
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: expect.objectContaining({ startMs: 40, endMs: 80, transcription: '' })
+    });
+
+    removalSave.resolve();
+    await removal;
+    await vi.runAllTimersAsync();
+
+    const expectedEditor = {
+      annotations: [],
+      activeAnnotationId: null,
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: {
+        startMs: 40,
+        endMs: 80,
+        eventType: 'speech',
+        transcription: '',
+        intelligibility: 'highly_intelligible',
+        speakerId: project.speakers[0].id,
+        overlap: 'none',
+        confidence: 'high',
+        acousticTagIds: [],
+        notes: ''
+      }
+    };
+    expect(get(store).project).toMatchObject(expectedEditor);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(savedProjects.at(-1)).toMatchObject(expectedEditor);
+  });
+
   it('recovers a selected annotation after the overlapping committed mutation save fails', async () => {
     const project = createProject(audio);
     project.annotations.push({

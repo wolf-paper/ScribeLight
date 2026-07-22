@@ -80,6 +80,8 @@
   let audioOpenQueue: Promise<void> = Promise.resolve();
   let transitionOwner: number | null = null;
   let transitionBusy = $state(false);
+  let tablePreviewAnnotationId = $state<string | null>(null);
+  let waveformPreviewAnnotationId = $state<string | null>(null);
   let previewAnnotationId = $state<string | null>(null);
   let dashboardHandle = $state<AnnotationDashboard | null>(null);
   let settingsBusy = $state(false);
@@ -92,6 +94,8 @@
   let closeUnlisten: (() => void) | null = null;
   let windowListenerInstalled = false;
   let lastLoopSelection = '';
+  let pendingOwnedLoopSelection = $state('');
+  let loopCommandGeneration = 0;
   let lastSaveError: string | null = null;
   let lastPlaybackError: string | null = null;
   let nativePreservationFailures = 0;
@@ -141,8 +145,22 @@
   });
 
   $effect(() => {
-    if (transitionBusy || !project?.annotations.some(({ id }) => id === previewAnnotationId)) {
-      previewAnnotationId = null;
+    previewAnnotationId = waveformPreviewAnnotationId ?? tablePreviewAnnotationId;
+  });
+
+  $effect(() => {
+    if (transitionBusy) {
+      tablePreviewAnnotationId = null;
+      waveformPreviewAnnotationId = null;
+      return;
+    }
+    if (tablePreviewAnnotationId !== null
+      && !project?.annotations.some(({ id }) => id === tablePreviewAnnotationId)) {
+      tablePreviewAnnotationId = null;
+    }
+    if (waveformPreviewAnnotationId !== null
+      && !project?.annotations.some(({ id }) => id === waveformPreviewAnnotationId)) {
+      waveformPreviewAnnotationId = null;
     }
   });
 
@@ -154,9 +172,15 @@
       const currentLoopKey = playback.loopRange
         ? `${playback.loopRange.startMs}:${playback.loopRange.endMs}`
         : '';
-      const shouldClearLoop = currentLoopKey !== '' && currentLoopKey === lastLoopSelection;
+      const observedOwnedLoopKey = lastLoopSelection;
+      const pendingOwnedLoopKey = pendingOwnedLoopSelection;
       lastLoopSelection = '';
-      if (shouldClearLoop) void reportPromise(audioSession.setLoop(null));
+      if (pendingOwnedLoopKey !== '') {
+        if (currentLoopKey === '' || currentLoopKey === pendingOwnedLoopKey) queueLoopCommand(null);
+        else if (playback.loopRange) queueLoopCommand(playback.loopRange, false);
+      } else if (currentLoopKey !== '' && currentLoopKey === observedOwnedLoopKey) {
+        queueLoopCommand(null);
+      }
       return;
     }
     if (!loopEnabled) {
@@ -166,7 +190,7 @@
     const key = `${selection.startMs}:${selection.endMs}`;
     if (key === lastLoopSelection) return;
     lastLoopSelection = key;
-    void reportPromise(audioSession.setLoop(selection));
+    queueLoopCommand(selection);
   });
 
   function basename(path: string): string {
@@ -615,8 +639,8 @@
 
   function previewWaveformAnnotation(annotationId: string, previewing: boolean): void {
     if (transitionBusy) return;
-    if (previewing) previewAnnotationId = annotationId;
-    else if (previewAnnotationId === annotationId) previewAnnotationId = null;
+    if (previewing) waveformPreviewAnnotationId = annotationId;
+    else if (waveformPreviewAnnotationId === annotationId) waveformPreviewAnnotationId = null;
   }
 
   function activateWaveformAnnotation(annotationId: string): void {
@@ -625,6 +649,16 @@
 
   function reportPromise(request: Promise<unknown>): Promise<void> {
     return request.then(() => undefined).catch((error) => { persistentError = formatUnknownError(error); });
+  }
+
+  function queueLoopCommand(selection: Selection | null, appOwned = true): void {
+    const generation = ++loopCommandGeneration;
+    pendingOwnedLoopSelection = appOwned && selection
+      ? `${selection.startMs}:${selection.endMs}`
+      : '';
+    void reportPromise(audioSession.setLoop(selection)).finally(() => {
+      if (loopCommandGeneration === generation) pendingOwnedLoopSelection = '';
+    });
   }
 
   function togglePlay(): void {
@@ -640,7 +674,7 @@
       setSelection(next);
     }
     lastLoopSelection = next ? `${next.startMs}:${next.endMs}` : '';
-    void reportPromise(audioSession.setLoop(next));
+    queueLoopCommand(next);
   }
 
   function globalKeydown(event: KeyboardEvent): void {
@@ -674,7 +708,7 @@
       const next = snapshot.loopRange ? null : current.activeSelection;
       if (next || snapshot.loopRange) {
         lastLoopSelection = next ? `${next.startMs}:${next.endMs}` : '';
-        void reportPromise(audioSession.setLoop(next));
+        queueLoopCommand(next);
       }
       return;
     }
@@ -790,7 +824,7 @@
             activeId={project.activeAnnotationId}
             format={project.displayFormat}
             disabled={transitionBusy}
-            onpreview={(id) => { if (!transitionBusy) previewAnnotationId = id; }}
+            onpreview={(id) => { if (!transitionBusy) tablePreviewAnnotationId = id; }}
             onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
             onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
           />

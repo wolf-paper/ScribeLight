@@ -61,6 +61,7 @@ export class ProjectStore implements Readable<ProjectState> {
     speakerId: 0, overlap: 0, confidence: 0, acousticTagIds: 0, notes: 0
   };
   private selectionRevision = 0;
+  private preserveSelectionRevision = 0;
   private activeAnnotationRevision = 0;
   private annotationSelection: AnnotationSelectionContext | null = null;
   readonly subscribe = this.state.subscribe;
@@ -199,6 +200,7 @@ export class ProjectStore implements Readable<ProjectState> {
 
     this.markDraftFields(draftFields);
     this.activeAnnotationRevision += 1;
+    this.preserveSelectionRevision += 1;
     this.annotationSelection = null;
     this.updateProject((project) => ({
       ...project,
@@ -328,6 +330,7 @@ export class ProjectStore implements Readable<ProjectState> {
     const projectRevision = this.projectRevision;
     const draftFieldRevisions = { ...this.draftFieldRevisions };
     const selectionRevision = this.selectionRevision;
+    const preserveSelectionRevision = this.preserveSelectionRevision;
     const activeAnnotationRevision = this.activeAnnotationRevision;
     let candidate: Project | null;
     try {
@@ -368,7 +371,10 @@ export class ProjectStore implements Readable<ProjectState> {
     let published: Project = {
       ...candidate,
       draft,
-      activeSelection: this.selectionRevision === selectionRevision ? candidate.activeSelection : latest.activeSelection,
+      activeSelection: this.preserveSelectionRevision !== preserveSelectionRevision
+        || this.selectionRevision !== selectionRevision
+        ? latest.activeSelection
+        : candidate.activeSelection,
       activeAnnotationId: this.activeAnnotationRevision === activeAnnotationRevision
         ? candidate.activeAnnotationId
         : latest.activeAnnotationId

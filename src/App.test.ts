@@ -222,6 +222,83 @@ describe('App', () => {
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
   });
 
+  it('arbitrates retained table focus and waveform previews without changing editor state', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored.annotations = [{
+      ...restored.draft,
+      id: 'first',
+      startMs: 1_000,
+      endMs: 2_000,
+      transcription: 'First transcription',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }, {
+      ...restored.draft,
+      id: 'second',
+      startMs: 1_500,
+      endMs: 2_500,
+      transcription: 'Second transcription',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }];
+    restored.activeSelection = { startMs: 3_000, endMs: 4_000 };
+    restored.draft = { ...restored.draft, startMs: 3_000, endMs: 4_000 };
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await openClip();
+    const firstRow = screen.getByRole('row', { name: 'Activate annotation First transcription' });
+    const secondRow = screen.getByRole('row', { name: 'Activate annotation Second transcription' });
+    const interactions = waveformInteractions.latest!;
+    const loopCallsBeforePreview = bridge.audioSetLoop.mock.calls.length;
+    const saveCallsBeforePreview = bridge.saveProject.mock.calls.length;
+    const savedProjectsBeforePreview = structuredClone(bridge.savedProjects);
+    const activeRowsBeforePreview = [firstRow.getAttribute('aria-current'), secondRow.getAttribute('aria-current')];
+    waveformSpies.setPreviewAnnotation.mockClear();
+
+    await fireEvent.focusIn(firstRow);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
+    interactions.onAnnotationPreview('second', true);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second'));
+    interactions.onAnnotationPreview('second', false);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
+
+    const callsBeforeSameIdLeave = waveformSpies.setPreviewAnnotation.mock.calls.length;
+    interactions.onAnnotationPreview('first', true);
+    interactions.onAnnotationPreview('first', false);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first');
+    expect(waveformSpies.setPreviewAnnotation.mock.calls.slice(callsBeforeSameIdLeave))
+      .not.toContainEqual([null]);
+
+    await fireEvent.focusOut(firstRow, { relatedTarget: null });
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
+    await fireEvent.focusIn(firstRow);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
+    interactions.onAnnotationPreview('second', true);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second'));
+    await fireEvent.focusOut(firstRow, { relatedTarget: null });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second');
+    interactions.onAnnotationPreview('second', false);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
+
+    const renderedTransitions = waveformSpies.setPreviewAnnotation.mock.calls
+      .map(([annotationId]) => annotationId)
+      .filter((annotationId, index, values) => index === 0 || annotationId !== values[index - 1]);
+    if (renderedTransitions[0] === null) renderedTransitions.shift();
+    expect(renderedTransitions).toEqual(['first', 'second', 'first', null, 'first', 'second', null]);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(3_000);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(4_000);
+    expect([firstRow.getAttribute('aria-current'), secondRow.getAttribute('aria-current')])
+      .toEqual(activeRowsBeforePreview);
+    expect(bridge.audioSetLoop).toHaveBeenCalledTimes(loopCallsBeforePreview);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(saveCallsBeforePreview);
+    expect(bridge.savedProjects).toEqual(savedProjectsBeforePreview);
+  });
+
   it('completes open, select/loop, annotate/update, reopen, import, and export using real stores', async () => {
     const identity = fakeIdentity('C:\\audio\\clip.wav');
     const imported = {
@@ -327,6 +404,75 @@ describe('App', () => {
     await waitFor(() => expect(bridge.audioSnapshot.mock.calls.length).toBeGreaterThan(snapshotCallsBeforeClear));
     expect(bridge.audioClearLoop).not.toHaveBeenCalled();
     expect(bridge.snapshot.loopRange).toEqual({ startMs: 200, endMs: 300 });
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
+  });
+
+  it('clears a pending App-owned loop when selection clears before native enable completes', async () => {
+    const bridge = makeFakeBridge({ identity: fakeIdentity('clip.wav', 10_000) });
+    const pendingEnable = deferred<void>();
+    const enableApplied = deferred<void>();
+    bridge.audioSetLoop.mockImplementationOnce(async (selection) => {
+      await pendingEnable.promise;
+      bridge.snapshot = { ...bridge.snapshot, loopRange: selection };
+      enableApplied.resolve();
+    });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+
+    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
+    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
+    await fireEvent.change(screen.getByLabelText('End milliseconds'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
+    expect(bridge.snapshot.loopRange).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    const snapshotCallsBeforeResolve = bridge.audioSnapshot.mock.calls.length;
+    pendingEnable.resolve();
+    await enableApplied.promise;
+    await waitFor(() => expect(bridge.audioSnapshot.mock.calls.length).toBeGreaterThan(snapshotCallsBeforeResolve));
+
+    expect(bridge.audioClearLoop).toHaveBeenCalledOnce();
+    expect(bridge.snapshot.loopRange).toBeNull();
+    expect(screen.getByRole('button', { name: 'Loop off' })).toBeDisabled();
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
+  });
+
+  it('restores a mismatched native loop when selection clears during a pending App-owned enable', async () => {
+    const bridge = makeFakeBridge({ identity: fakeIdentity('clip.wav', 10_000) });
+    const pendingEnable = deferred<void>();
+    const enableApplied = deferred<void>();
+    const appSelection = { startMs: 100, endMs: 1_000 };
+    const externalLoop = { startMs: 200, endMs: 300 };
+    bridge.audioSetLoop.mockImplementationOnce(async (selection) => {
+      await pendingEnable.promise;
+      bridge.snapshot = { ...bridge.snapshot, loopRange: selection };
+      enableApplied.resolve();
+    });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+
+    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
+    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
+    await fireEvent.change(screen.getByLabelText('End milliseconds'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith(appSelection));
+
+    bridge.snapshot = { ...bridge.snapshot, loopRange: externalLoop };
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Loop on' })).toBeInTheDocument());
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    pendingEnable.resolve();
+    await enableApplied.promise;
+
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledTimes(2));
+    expect(bridge.audioSetLoop.mock.calls.map(([selection]) => selection)).toEqual([appSelection, externalLoop]);
+    expect(bridge.audioClearLoop).not.toHaveBeenCalled();
+    expect(bridge.snapshot.loopRange).toEqual(externalLoop);
+    expect(screen.getByRole('button', { name: 'Loop on' })).toBeEnabled();
     expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
     expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
