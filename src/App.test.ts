@@ -304,6 +304,34 @@ describe('App', () => {
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
   });
 
+  it('preserves a mismatched native loop when clearing the App-owned selection', async () => {
+    const bridge = makeFakeBridge({ identity: fakeIdentity('clip.wav', 10_000) });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+
+    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
+    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
+    await fireEvent.change(screen.getByLabelText('End milliseconds'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
+
+    const snapshotCallsBeforeReplacement = bridge.audioSnapshot.mock.calls.length;
+    bridge.snapshot = { ...bridge.snapshot, loopRange: { startMs: 200, endMs: 300 } };
+    await waitFor(() => expect(bridge.audioSnapshot.mock.calls.length)
+      .toBeGreaterThan(snapshotCallsBeforeReplacement));
+    bridge.audioClearLoop.mockClear();
+    const snapshotCallsBeforeClear = bridge.audioSnapshot.mock.calls.length;
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+
+    await waitFor(() => expect(bridge.audioSnapshot.mock.calls.length).toBeGreaterThan(snapshotCallsBeforeClear));
+    expect(bridge.audioClearLoop).not.toHaveBeenCalled();
+    expect(bridge.snapshot.loopRange).toEqual({ startMs: 200, endMs: 300 });
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
+  });
+
   it('holds empty and invalid boundary edits locally before realigning waveform, native loop, and export', async () => {
     const identity = fakeIdentity('clip.wav', 10_000);
     const bridge = makeFakeBridge({ identity });

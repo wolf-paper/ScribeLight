@@ -151,9 +151,12 @@
     const selection = project?.activeSelection ?? null;
     const loopEnabled = playback.loopRange !== null;
     if (!selection) {
-      const hadSelection = lastLoopSelection !== '';
+      const currentLoopKey = playback.loopRange
+        ? `${playback.loopRange.startMs}:${playback.loopRange.endMs}`
+        : '';
+      const shouldClearLoop = currentLoopKey !== '' && currentLoopKey === lastLoopSelection;
       lastLoopSelection = '';
-      if (loopEnabled && hadSelection) void reportPromise(audioSession.setLoop(null));
+      if (shouldClearLoop) void reportPromise(audioSession.setLoop(null));
       return;
     }
     if (!loopEnabled) {
