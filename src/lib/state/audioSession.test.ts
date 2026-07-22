@@ -105,6 +105,61 @@ describe('AudioSession', () => {
     expect(get(session).loopRange).toEqual({ startMs: 30, endMs: 40 });
   });
 
+  it('keeps a coalesced caller pending when its loop arrives during the final refresh', async () => {
+    const loopB = { startMs: 10, endMs: 20 };
+    const loopC = { startMs: 30, endMs: 40 };
+    const refreshB = deferred<PlaybackSnapshot>();
+    const refreshBStarted = deferred<void>();
+    const setC = deferred<void>();
+    const setCStarted = deferred<void>();
+    const refreshC = deferred<PlaybackSnapshot>();
+    const refreshCStarted = deferred<void>();
+    const order: string[] = [];
+    bridge.audioSetLoop
+      .mockImplementationOnce(async () => { order.push('set B'); })
+      .mockImplementationOnce(async () => {
+        order.push('set C');
+        setCStarted.resolve();
+        await setC.promise;
+      });
+    bridge.audioSnapshot
+      .mockImplementationOnce(() => {
+        order.push('refresh B');
+        refreshBStarted.resolve();
+        return refreshB.promise;
+      })
+      .mockImplementationOnce(() => {
+        order.push('refresh C');
+        refreshCStarted.resolve();
+        return refreshC.promise;
+      });
+    const session = new AudioSession(bridge);
+
+    const requestB = session.setLoop(loopB);
+    await refreshBStarted.promise;
+    const requestC = session.setLoop(loopC);
+    expect(requestC).toBe(requestB);
+    let requestCSettled = false;
+    void requestC.then(() => { requestCSettled = true; });
+
+    refreshB.resolve(snapshot(0, loopB));
+    await setCStarted.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['set B', 'refresh B', 'set C']);
+    expect(requestCSettled).toBe(false);
+
+    setC.resolve();
+    await refreshCStarted.promise;
+    expect(requestCSettled).toBe(false);
+    refreshC.resolve(snapshot(0, loopC));
+    await expect(requestC).resolves.toBeUndefined();
+
+    expect(order).toEqual(['set B', 'refresh B', 'set C', 'refresh C']);
+    expect(bridge.audioSetLoop.mock.calls).toEqual([[loopB], [loopC]]);
+    expect(get(session).loopRange).toEqual(loopC);
+  });
+
   it('stops first, invalidates in-flight snapshots, and closes the native stream once reentrantly', async () => {
     const pendingSnapshot = deferred<PlaybackSnapshot>();
     const pendingClose = deferred<void>();

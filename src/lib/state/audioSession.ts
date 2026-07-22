@@ -149,18 +149,20 @@ export class AudioSession implements Readable<PlaybackSnapshot> {
   private async applyDesiredLoops(): Promise<void> {
     const lifecycle = this.lifecycle;
     try {
-      while (!this.closed && this.desiredLoop !== undefined && lifecycle === this.lifecycle) {
-        const next = this.desiredLoop;
-        this.desiredLoop = undefined;
-        try {
-          if (next) await this.bridge.audioSetLoop(next);
-          else await this.bridge.audioClearLoop();
-        } catch (error) {
-          this.setError(error);
-          throw error;
+      do {
+        while (!this.closed && this.desiredLoop !== undefined && lifecycle === this.lifecycle) {
+          const next = this.desiredLoop;
+          this.desiredLoop = undefined;
+          try {
+            if (next) await this.bridge.audioSetLoop(next);
+            else await this.bridge.audioClearLoop();
+          } catch (error) {
+            this.setError(error);
+            throw error;
+          }
         }
-      }
-      if (!this.closed && lifecycle === this.lifecycle) await this.refresh();
+        if (!this.closed && lifecycle === this.lifecycle) await this.refresh();
+      } while (!this.closed && this.desiredLoop !== undefined && lifecycle === this.lifecycle);
     } finally {
       this.loopWorker = null;
       if (!this.closed && this.desiredLoop !== undefined && lifecycle === this.lifecycle) this.loopWorker = this.applyDesiredLoops();

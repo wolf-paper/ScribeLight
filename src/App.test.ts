@@ -478,6 +478,85 @@ describe('App', () => {
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
   });
 
+  it('reconciles a loop queued during final refresh before it can become a ghost loop', async () => {
+    const bridge = makeFakeBridge({ identity: fakeIdentity('clip.wav', 10_000) });
+    const loopB = { startMs: 100, endMs: 1_000 };
+    const loopC = { startMs: 200, endMs: 1_200 };
+    const loopD = { startMs: 300, endMs: 1_300 };
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    const interactions = waveformInteractions.latest!;
+
+    interactions.onSelectionChange(loopB);
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(loopB.startMs));
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Loop on' })).toBeInTheDocument());
+    expect(bridge.snapshot.loopRange).toEqual(loopB);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const refreshC = deferred<typeof bridge.snapshot>();
+    const refreshCStarted = deferred<void>();
+    const setCApplied = deferred<void>();
+    const setD = deferred<void>();
+    const setDStarted = deferred<void>();
+    let holdRefreshC = false;
+    let cCommandCount = 0;
+    bridge.audioSnapshot.mockImplementation(async () => {
+      if (holdRefreshC) {
+        refreshCStarted.resolve();
+        return refreshC.promise;
+      }
+      return bridge.snapshot;
+    });
+    bridge.audioSetLoop.mockImplementation(async (selection) => {
+      if (selection.startMs === loopC.startMs && selection.endMs === loopC.endMs) {
+        cCommandCount += 1;
+        bridge.snapshot = { ...bridge.snapshot, loopRange: selection };
+        if (cCommandCount === 1) {
+          holdRefreshC = true;
+          setCApplied.resolve();
+        }
+        return;
+      }
+      if (selection.startMs === loopD.startMs && selection.endMs === loopD.endMs) {
+        setDStarted.resolve();
+        await setD.promise;
+        bridge.snapshot = { ...bridge.snapshot, loopRange: selection };
+        return;
+      }
+      bridge.snapshot = { ...bridge.snapshot, loopRange: selection };
+    });
+
+    interactions.onSelectionChange(loopC);
+    await setCApplied.promise;
+    await refreshCStarted.promise;
+    expect(bridge.snapshot.loopRange).toEqual(loopC);
+    interactions.onSelectionChange(loopD);
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(loopD.startMs));
+    await Promise.resolve();
+
+    holdRefreshC = false;
+    refreshC.resolve({ ...bridge.snapshot, loopRange: loopC });
+    await setDStarted.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bridge.snapshot.loopRange).toEqual(loopC);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0));
+    await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null));
+    setD.resolve();
+
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledTimes(4));
+    expect(bridge.audioSetLoop.mock.calls.map(([selection]) => selection))
+      .toEqual([loopB, loopC, loopD, loopC]);
+    expect(bridge.audioClearLoop).not.toHaveBeenCalled();
+    expect(bridge.snapshot.loopRange).toEqual(loopC);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(screen.getByRole('button', { name: 'Loop on' })).toBeEnabled();
+  });
+
   it('holds empty and invalid boundary edits locally before realigning waveform, native loop, and export', async () => {
     const identity = fakeIdentity('clip.wav', 10_000);
     const bridge = makeFakeBridge({ identity });
