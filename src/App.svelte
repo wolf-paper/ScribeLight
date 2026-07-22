@@ -150,8 +150,14 @@
     if (transitionBusy) return;
     const selection = project?.activeSelection ?? null;
     const loopEnabled = playback.loopRange !== null;
-    if (!loopEnabled || !selection) {
-      if (!loopEnabled) lastLoopSelection = '';
+    if (!selection) {
+      const hadSelection = lastLoopSelection !== '';
+      lastLoopSelection = '';
+      if (loopEnabled && hadSelection) void reportPromise(audioSession.setLoop(null));
+      return;
+    }
+    if (!loopEnabled) {
+      lastLoopSelection = '';
       return;
     }
     const key = `${selection.startMs}:${selection.endMs}`;

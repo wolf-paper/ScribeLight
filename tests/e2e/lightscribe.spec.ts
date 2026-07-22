@@ -286,6 +286,65 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(clearAnnotation).toHaveText('X');
   await clearAnnotation.click();
   await expect(page.getByRole('button', { name: 'Add annotation' })).toBeVisible();
+  await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
+  await expect(page.getByLabel('End milliseconds')).toHaveValue('0');
+  await expect(page.getByRole('button', { name: 'Move loop selection' })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+    }
+  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toBeNull();
+  expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute('aria-current'))
+  )).toEqual([null, null]);
+  await expect(selectedTranscription).toHaveValue('');
+  await expect(page.getByLabel('Notes')).toHaveValue('');
+  await expect(page.getByLabel('Speaker').locator('option:checked')).toHaveText('speaker_1');
+  await expect(page.getByLabel('Event type')).toHaveValue('speech');
+  await expect(page.getByLabel('Intelligibility')).toHaveValue('highly_intelligible');
+  await expect(page.getByLabel('Overlap')).toHaveValue('none');
+  await expect(page.getByLabel('Confidence')).toHaveValue('high');
+  await expect(page.getByRole('button', { name: /^Remove .* acoustic tag$/ })).toHaveCount(0);
+  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+  await expect.poll(() => page.evaluate(() => {
+    const project = (globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { savedProject: Project | null };
+    }).__LIGHTSCRIBE_TEST__.savedProject;
+    if (!project) return null;
+    return {
+      activeAnnotationId: project.activeAnnotationId,
+      activeSelection: project.activeSelection,
+      annotations: project.annotations.length,
+      draft: {
+        startMs: project.draft.startMs,
+        endMs: project.draft.endMs,
+        eventType: project.draft.eventType,
+        transcription: project.draft.transcription,
+        intelligibility: project.draft.intelligibility,
+        speaker: project.speakers.find(({ id }) => id === project.draft.speakerId)?.label ?? null,
+        overlap: project.draft.overlap,
+        confidence: project.draft.confidence,
+        acousticTagIds: project.draft.acousticTagIds,
+        notes: project.draft.notes
+      }
+    };
+  })).toEqual({
+    activeAnnotationId: null,
+    activeSelection: null,
+    annotations: 2,
+    draft: {
+      startMs: 0,
+      endMs: 0,
+      eventType: 'speech',
+      transcription: '',
+      intelligibility: 'highly_intelligible',
+      speaker: 'speaker_1',
+      overlap: 'none',
+      confidence: 'high',
+      acousticTagIds: [],
+      notes: ''
+    }
+  });
 
   const startBoundary = page.getByLabel('Start milliseconds');
   const endBoundary = page.getByLabel('End milliseconds');
@@ -307,7 +366,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
     globalThis as typeof globalThis & {
       __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
+  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toBeNull();
   await endBoundary.fill('');
   await endBoundary.pressSequentially('4000');
   await expect(endBoundary).toHaveValue('4000');
@@ -323,6 +382,12 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
         snapshot: { loopRange: { startMs: number; endMs: number } | null };
         nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }>;
       };
+    }
+  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toBeNull();
+  await page.getByRole('button', { name: 'Loop off' }).click();
+  await expect.poll(() => page.evaluate(() => (
+    globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
   ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 3_000, endMs: 4_000 });
   const recordedLoops = await page.evaluate(() => (

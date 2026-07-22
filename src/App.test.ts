@@ -284,6 +284,26 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations'));
   });
 
+  it('clears an enabled native loop when the inspector clears its canonical selection', async () => {
+    const bridge = makeFakeBridge({ identity: fakeIdentity('clip.wav', 10_000) });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+
+    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
+    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
+    await fireEvent.change(screen.getByLabelText('End milliseconds'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+
+    await waitFor(() => expect(bridge.audioClearLoop).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'Loop off' })).toBeDisabled();
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
+  });
+
   it('holds empty and invalid boundary edits locally before realigning waveform, native loop, and export', async () => {
     const identity = fakeIdentity('clip.wav', 10_000);
     const bridge = makeFakeBridge({ identity });
