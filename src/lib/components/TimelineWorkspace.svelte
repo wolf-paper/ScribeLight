@@ -16,6 +16,8 @@
   export let playheadMs = 0;
   export let annotations: readonly WaveformAnnotation[] = [];
   export let previewAnnotationId: string | null = null;
+  export let onannotationpreview: (annotationId: string, previewing: boolean) => void;
+  export let onannotationactivate: (annotationId: string) => void;
   export let disabled = false;
 
   let viewport: HTMLDivElement;
@@ -97,7 +99,11 @@
         <LoopSelectionBar {selection} {durationMs} {pixelsPerSecond} {contentWidth} {onchange} />
         <div aria-label="Waveform" class="waveform-slot" data-timeline-layer="waveform" style:width={`${contentWidth}px`}>
           {#if peaks}
-            <WaveformView {peaks} {annotations} {previewAnnotationId} {selection} {playheadMs} {pixelsPerSecond} {onchange} />
+            <WaveformView {peaks} {annotations} {previewAnnotationId}
+              {selection} {playheadMs} {pixelsPerSecond} {onchange}
+              {onannotationpreview}
+              {onannotationactivate}
+            />
           {/if}
         </div>
         <TimeRuler {durationMs} {pixelsPerSecond} {format} {contentWidth} layer="bottom-ruler" />

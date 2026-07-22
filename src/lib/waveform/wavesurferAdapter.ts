@@ -18,11 +18,17 @@ export interface WaveformAdapter {
   destroy(): void;
 }
 
+export interface WaveformInteractionHandlers {
+  onSelectionChange(selection: Selection): void;
+  onAnnotationPreview(annotationId: string, previewing: boolean): void;
+  onAnnotationActivate(annotationId: string): void;
+}
+
 export type WaveformFactory = (options: WaveSurferOptions) => WaveSurfer;
 export type WaveformAdapterFactory = (
   container: HTMLElement,
   peaks: PeakData,
-  onchange: (selection: Selection) => void
+  handlers: WaveformInteractionHandlers
 ) => WaveformAdapter;
 
 const canonicalRegionId = 'lightscribe-canonical-selection';
@@ -78,7 +84,7 @@ function normalizeRegion(startSeconds: number, endSeconds: number, durationMs: n
 export function createWaveformAdapter(
   container: HTMLElement,
   peaks: PeakData,
-  onchange: (selection: Selection) => void,
+  handlers: WaveformInteractionHandlers,
   factory: WaveformFactory = WaveSurfer.create
 ): WaveformAdapter {
   const initialPalette = resolvePalette(container);
@@ -101,6 +107,7 @@ export function createWaveformAdapter(
   let desiredAnnotations: readonly WaveformAnnotation[] = [];
   let desiredPreviewAnnotationId: string | null = null;
   const annotationRegions = new Map<string, ReturnType<typeof regions.addRegion>>();
+  const annotationInteractionStops = new Map<string, () => void>();
   let previewRegion: ReturnType<typeof regions.addRegion> | null = null;
   let previewAnnotationId: string | null = null;
   let desiredPlayheadMs = 0;
@@ -130,7 +137,8 @@ export function createWaveformAdapter(
     if (!element) return;
     element.dataset.lightscribeRegion = 'annotation';
     element.dataset.annotationId = annotationId;
-    element.style.pointerEvents = 'none';
+    element.style.pointerEvents = 'all';
+    element.style.cursor = 'pointer';
     element.style.zIndex = passiveLayer;
   };
 
@@ -216,6 +224,8 @@ export function createWaveformAdapter(
     try {
       for (const [id, annotationRegion] of annotationRegions) {
         if (desiredById.has(id)) continue;
+        annotationInteractionStops.get(id)?.();
+        annotationInteractionStops.delete(id);
         annotationRegion.remove();
         annotationRegions.delete(id);
       }
@@ -241,6 +251,16 @@ export function createWaveformAdapter(
         });
         annotationRegions.set(annotation.id, next);
         markAnnotation(next, annotation.id);
+        const stopOver = next.on('over', () => {
+          if (!destroyed) handlers.onAnnotationPreview(annotation.id, true);
+        });
+        const stopLeave = next.on('leave', () => {
+          if (!destroyed) handlers.onAnnotationPreview(annotation.id, false);
+        });
+        annotationInteractionStops.set(annotation.id, () => {
+          stopOver();
+          stopLeave();
+        });
       }
     } finally {
       syncing = false;
@@ -305,7 +325,7 @@ export function createWaveformAdapter(
 
   const reportUserSelection = (next: typeof region): void => {
     if (destroyed || syncing || !next || next !== region) return;
-    onchange(normalizeRegion(next.start, next.end, peaks.durationMs));
+    handlers.onSelectionChange(normalizeRegion(next.start, next.end, peaks.durationMs));
   };
   const stopInitialized = regions.on('region-initialized', (next) => {
     if (destroyed || syncing) return;
@@ -339,6 +359,14 @@ export function createWaveformAdapter(
     reportUserSelection(next);
   });
   const stopUpdated = regions.on('region-updated', reportUserSelection);
+  const stopDoubleClicked = regions.on('region-double-clicked', (next, event) => {
+    if (destroyed || syncing) return;
+    const annotation = [...annotationRegions].find(([, candidate]) => candidate === next);
+    if (!annotation) return;
+    event.preventDefault();
+    event.stopPropagation();
+    handlers.onAnnotationActivate(annotation[0]);
+  });
   const stopReady = wave.on('ready', () => {
     if (destroyed) return;
     ready = true;
@@ -379,6 +407,9 @@ export function createWaveformAdapter(
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      for (const stopInteraction of annotationInteractionStops.values()) stopInteraction();
+      annotationInteractionStops.clear();
+      stopDoubleClicked();
       syncing = true;
       try {
         region?.remove();

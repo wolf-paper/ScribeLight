@@ -16,6 +16,8 @@
   export let annotations: readonly WaveformAnnotation[] = [];
   export let previewAnnotationId: string | null = null;
   export let onchange: (selection: Selection) => void;
+  export let onannotationpreview: (annotationId: string, previewing: boolean) => void;
+  export let onannotationactivate: (annotationId: string) => void;
   export let createAdapter: WaveformAdapterFactory = createWaveformAdapter;
 
   let container: HTMLDivElement;
@@ -25,7 +27,11 @@
 
   function replaceAdapter(nextPeaks: PeakData): void {
     adapter?.destroy();
-    adapter = createAdapter(container, nextPeaks, onchange);
+    adapter = createAdapter(container, nextPeaks, {
+      onSelectionChange: onchange,
+      onAnnotationPreview: onannotationpreview,
+      onAnnotationActivate: onannotationactivate
+    });
     activePeaks = nextPeaks;
   }
 

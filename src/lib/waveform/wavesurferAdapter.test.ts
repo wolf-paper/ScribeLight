@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createWaveformAdapter } from './wavesurferAdapter';
+import { createWaveformAdapter, type WaveformInteractionHandlers } from './wavesurferAdapter';
 import type { PeakData } from '../bridge/native';
 
 const peaks: PeakData = {
@@ -24,17 +24,30 @@ interface RegionDouble {
   options: Record<string, unknown>;
   setOptions: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
+  emit(event: 'over' | 'leave', mouse?: MouseEvent): void;
+}
+
+function createHandlers(): WaveformInteractionHandlers {
+  return {
+    onSelectionChange: vi.fn(),
+    onAnnotationPreview: vi.fn(),
+    onAnnotationActivate: vi.fn()
+  };
 }
 
 function createDouble() {
-  const regionListeners = new Map<string, (region: RegionDouble) => void>();
+  const regionListeners = new Map<string, (region: RegionDouble, event?: MouseEvent) => void>();
   const waveListeners = new Map<string, () => void>();
-  const disposers = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+  const pluginDisposers = new Map<string, ReturnType<typeof vi.fn>>();
+  const waveDisposers = new Map<string, ReturnType<typeof vi.fn>>();
+  const interactionDisposers: ReturnType<typeof vi.fn>[] = [];
   const renderer = { renderProgress: vi.fn() };
   const createdRegions: RegionDouble[] = [];
   const regions = {
     addRegion: vi.fn((options: Record<string, unknown> & { id: string; start: number; end: number }) => {
       const element = document.createElement('div');
+      const interactionListeners = new Map<string, (mouse?: MouseEvent) => void>();
       const region: RegionDouble = {
         id: options.id,
         start: options.start,
@@ -47,23 +60,39 @@ function createDouble() {
           region.end = next.end ?? region.end;
           regionListeners.get('region-updated')?.(region);
         }),
-        remove: vi.fn(() => element.remove())
+        remove: vi.fn(() => element.remove()),
+        on: vi.fn((event: 'over' | 'leave', listener: (mouse?: MouseEvent) => void) => {
+          interactionListeners.set(event, listener);
+          const dispose = vi.fn(() => interactionListeners.delete(event));
+          interactionDisposers.push(dispose);
+          return dispose;
+        }),
+        emit(event, mouse) {
+          interactionListeners.get(event)?.(mouse);
+        }
       };
       createdRegions.push(region);
       return region;
     }),
     clearRegions: vi.fn(),
     enableDragSelection: vi.fn(() => vi.fn()),
-    on: vi.fn((event: string, listener: (region: RegionDouble) => void) => {
+    on: vi.fn((event: string, listener: (region: RegionDouble, event?: MouseEvent) => void) => {
       regionListeners.set(event, listener);
-      return disposers[regionListeners.size - 1];
-    })
+      const dispose = vi.fn(() => regionListeners.delete(event));
+      pluginDisposers.set(event, dispose);
+      return dispose;
+    }),
+    emit(event: string, region: RegionDouble, eventObject?: MouseEvent) {
+      regionListeners.get(event)?.(region, eventObject);
+    }
   };
   const wave = {
     registerPlugin: vi.fn(() => regions),
     on: vi.fn((event: string, listener: () => void) => {
       waveListeners.set(event, listener);
-      return disposers[3];
+      const dispose = vi.fn(() => waveListeners.delete(event));
+      waveDisposers.set(event, dispose);
+      return dispose;
     }),
     getRenderer: vi.fn(() => renderer),
     setOptions: vi.fn(),
@@ -81,7 +110,9 @@ function createDouble() {
     get factoryOptions() { return factoryOptions; },
     regionListeners,
     waveListeners,
-    disposers,
+    pluginDisposers,
+    waveDisposers,
+    interactionDisposers,
     renderer,
     createdRegions,
     regions,
@@ -111,8 +142,9 @@ function mockPaletteTokens(container: HTMLElement, tokens: PaletteTokens) {
 describe('createWaveformAdapter', () => {
   it('waits for ready and uses only the latest canonical selection after clear and replacement', () => {
     const { factory, regionListeners, waveListeners, regions } = createDouble();
-    const changed = vi.fn();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, factory);
+    const handlers = createHandlers();
+    const changed = handlers.onSelectionChange;
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, factory);
 
     adapter.setSelection({ startMs: 100, endMs: 200 });
     adapter.setSelection(null);
@@ -144,8 +176,9 @@ describe('createWaveformAdapter', () => {
 
   it('removes the prior region as a second user drag starts, then emits once when it completes', () => {
     const { factory, regionListeners, waveListeners, regions } = createDouble();
-    const changed = vi.fn();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, factory);
+    const handlers = createHandlers();
+    const changed = handlers.onSelectionChange;
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, factory);
 
     adapter.setSelection({ startMs: 100, endMs: 200 });
     waveListeners.get('ready')?.();
@@ -159,7 +192,9 @@ describe('createWaveformAdapter', () => {
       element: document.createElement('div'),
       options: {},
       setOptions: vi.fn(),
-      remove: vi.fn()
+      remove: vi.fn(),
+      on: vi.fn(),
+      emit: vi.fn()
     };
 
     regionListeners.get('region-initialized')?.(userRegion);
@@ -180,7 +215,7 @@ describe('createWaveformAdapter', () => {
 
   it('keeps WaveSurfer renderer-only and applies pending playhead and zoom after ready', () => {
     const fixture = createDouble();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, vi.fn(), fixture.factory);
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, createHandlers(), fixture.factory);
     const options = fixture.factoryOptions as Record<string, unknown>;
 
     expect(options.interact).toBe(false);
@@ -201,7 +236,7 @@ describe('createWaveformAdapter', () => {
 
   it('does not stretch a capped sub-second waveform beyond the shared duration width', () => {
     const fixture = createDouble();
-    const adapter = createWaveformAdapter(document.createElement('div'), shortPeaks, vi.fn(), fixture.factory);
+    const adapter = createWaveformAdapter(document.createElement('div'), shortPeaks, createHandlers(), fixture.factory);
     const options = fixture.factoryOptions as Record<string, unknown>;
 
     expect(options.duration).toBe(0.2);
@@ -231,7 +266,7 @@ describe('createWaveformAdapter', () => {
       '--color-annotation-preview': 'rgb(40 41 42 / .42)'
     };
     const computedStyle = mockPaletteTokens(container, tokens);
-    const adapter = createWaveformAdapter(container, peaks, vi.fn(), fixture.factory);
+    const adapter = createWaveformAdapter(container, peaks, createHandlers(), fixture.factory);
 
     expect(fixture.factoryOptions).toMatchObject({
       waveColor: '#101112',
@@ -261,7 +296,7 @@ describe('createWaveformAdapter', () => {
       '--color-annotation-preview': 'rgb(44 44 44 / .42)'
     };
     const computedStyle = mockPaletteTokens(container, tokens);
-    const adapter = createWaveformAdapter(container, peaks, vi.fn(), fixture.factory);
+    const adapter = createWaveformAdapter(container, peaks, createHandlers(), fixture.factory);
     adapter.setSelection({ startMs: 125, endMs: 375 });
     adapter.setAnnotations([{ id: 'saved', startMs: 200, endMs: 400 }]);
     adapter.setPreviewAnnotation('saved');
@@ -300,8 +335,9 @@ describe('createWaveformAdapter', () => {
 
   it('diffs pending passive annotations by ID without disturbing the canonical selection', () => {
     const fixture = createDouble();
-    const changed = vi.fn();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, fixture.factory);
+    const handlers = createHandlers();
+    const changed = handlers.onSelectionChange;
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, fixture.factory);
 
     adapter.setSelection({ startMs: 50, endMs: 150 });
     adapter.setAnnotations([
@@ -318,7 +354,8 @@ describe('createWaveformAdapter', () => {
       id: 'lightscribe-annotation-a', start: .1, end: .3, drag: false, resize: false
     });
     expect(passive[0].element.dataset.annotationId).toBe('a');
-    expect(passive[0].element.style.pointerEvents).toBe('none');
+    expect(passive[0].element.style.pointerEvents).toBe('all');
+    expect(passive[0].element.style.cursor).toBe('pointer');
     expect(passive[0].element.style.zIndex).toBe('1');
     expect(canonical.element.dataset.lightscribeRegion).toBe('selection');
     expect(canonical.element.style.zIndex).toBe('2');
@@ -348,10 +385,120 @@ describe('createWaveformAdapter', () => {
     adapter.destroy();
   });
 
+  it('reports passive hover intents, preserves stale leaves, and activates only on passive double-click', () => {
+    const fixture = createDouble();
+    const handlers = createHandlers();
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, fixture.factory);
+    adapter.setSelection({ startMs: 25, endMs: 75 });
+    adapter.setAnnotations([
+      { id: 'a', startMs: 100, endMs: 300 },
+      { id: 'b', startMs: 200, endMs: 400 }
+    ]);
+    adapter.setPreviewAnnotation('a');
+    fixture.waveListeners.get('ready')?.();
+    const passive = fixture.createdRegions.filter(({ element }) =>
+      element.dataset.lightscribeRegion === 'annotation'
+    );
+    const a = passive.find(({ element }) => element.dataset.annotationId === 'a')!;
+    const b = passive.find(({ element }) => element.dataset.annotationId === 'b')!;
+    const canonical = fixture.createdRegions.find(({ element }) =>
+      element.dataset.lightscribeRegion === 'selection'
+    )!;
+    const preview = fixture.createdRegions.find(({ element }) =>
+      element.dataset.lightscribeRegion === 'preview'
+    )!;
+
+    expect(a.options).toMatchObject({ drag: false, resize: false });
+    expect(a.element.style.pointerEvents).toBe('all');
+    expect(a.element.style.cursor).toBe('pointer');
+    a.emit('over');
+    expect(handlers.onAnnotationPreview).toHaveBeenLastCalledWith('a', true);
+    a.emit('leave');
+    expect(handlers.onAnnotationPreview).toHaveBeenLastCalledWith('a', false);
+
+    vi.mocked(handlers.onAnnotationPreview).mockClear();
+    a.emit('over');
+    b.emit('over');
+    a.emit('leave');
+    expect(vi.mocked(handlers.onAnnotationPreview).mock.calls).toEqual([
+      ['a', true],
+      ['b', true],
+      ['a', false]
+    ]);
+
+    vi.mocked(handlers.onSelectionChange).mockClear();
+    vi.mocked(handlers.onAnnotationPreview).mockClear();
+    vi.mocked(handlers.onAnnotationActivate).mockClear();
+    fixture.regions.emit('region-clicked', a, new MouseEvent('click'));
+    expect(handlers.onSelectionChange).not.toHaveBeenCalled();
+    expect(handlers.onAnnotationPreview).not.toHaveBeenCalled();
+    expect(handlers.onAnnotationActivate).not.toHaveBeenCalled();
+
+    const doubleClick = {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn()
+    } as unknown as MouseEvent;
+    fixture.regions.emit('region-double-clicked', a, doubleClick);
+    expect(handlers.onAnnotationActivate).toHaveBeenCalledOnce();
+    expect(handlers.onAnnotationActivate).toHaveBeenLastCalledWith('a');
+    expect(doubleClick.preventDefault).toHaveBeenCalledOnce();
+    expect(doubleClick.stopPropagation).toHaveBeenCalledOnce();
+    fixture.regions.emit('region-double-clicked', canonical, new MouseEvent('dblclick'));
+    fixture.regions.emit('region-double-clicked', preview, new MouseEvent('dblclick'));
+    expect(handlers.onAnnotationActivate).toHaveBeenCalledOnce();
+
+    adapter.destroy();
+  });
+
+  it('stops passive interactions on removal and replacement and stops every interaction on destroy', () => {
+    const fixture = createDouble();
+    const handlers = createHandlers();
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, fixture.factory);
+    adapter.setAnnotations([
+      { id: 'a', startMs: 100, endMs: 300 },
+      { id: 'b', startMs: 200, endMs: 400 }
+    ]);
+    fixture.waveListeners.get('ready')?.();
+    const a = fixture.createdRegions.find(({ element }) => element.dataset.annotationId === 'a')!;
+    const b = fixture.createdRegions.find(({ element }) => element.dataset.annotationId === 'b')!;
+    const [stopAOver, stopALeave, stopBOver, stopBLeave] = fixture.interactionDisposers;
+    const oldDoubleClick = fixture.regionListeners.get('region-double-clicked')!;
+
+    adapter.setAnnotations([{ id: 'b', startMs: 225, endMs: 425 }]);
+    expect(stopAOver).toHaveBeenCalledOnce();
+    expect(stopALeave).toHaveBeenCalledOnce();
+    a.emit('over');
+    a.emit('leave');
+    expect(handlers.onAnnotationPreview).not.toHaveBeenCalled();
+
+    adapter.setAnnotations([{ id: 'c', startMs: 500, endMs: 700 }]);
+    expect(stopBOver).toHaveBeenCalledOnce();
+    expect(stopBLeave).toHaveBeenCalledOnce();
+    b.emit('over');
+    const c = fixture.createdRegions.find(({ element }) => element.dataset.annotationId === 'c')!;
+    const [stopCOver, stopCLeave] = fixture.interactionDisposers.slice(4);
+
+    adapter.destroy();
+    adapter.destroy();
+    expect(stopAOver).toHaveBeenCalledOnce();
+    expect(stopALeave).toHaveBeenCalledOnce();
+    expect(stopBOver).toHaveBeenCalledOnce();
+    expect(stopBLeave).toHaveBeenCalledOnce();
+    expect(stopCOver).toHaveBeenCalledOnce();
+    expect(stopCLeave).toHaveBeenCalledOnce();
+    expect(fixture.pluginDisposers.get('region-double-clicked')).toHaveBeenCalledOnce();
+
+    c.emit('over');
+    oldDoubleClick(c, new MouseEvent('dblclick'));
+    expect(handlers.onAnnotationPreview).not.toHaveBeenCalled();
+    expect(handlers.onAnnotationActivate).not.toHaveBeenCalled();
+  });
+
   it('keeps one non-interactive preview above other layers and clears stale preview identity', () => {
     const fixture = createDouble();
-    const changed = vi.fn();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, fixture.factory);
+    const handlers = createHandlers();
+    const changed = handlers.onSelectionChange;
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, fixture.factory);
     adapter.setSelection({ startMs: 25, endMs: 75 });
     adapter.setAnnotations([
       { id: 'a', startMs: 100, endMs: 300 },
@@ -398,8 +545,9 @@ describe('createWaveformAdapter', () => {
 
   it('never promotes or reports managed passive and preview region events', () => {
     const fixture = createDouble();
-    const changed = vi.fn();
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, changed, fixture.factory);
+    const handlers = createHandlers();
+    const changed = handlers.onSelectionChange;
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, handlers, fixture.factory);
     adapter.setSelection({ startMs: 100, endMs: 200 });
     adapter.setAnnotations([{ id: 'a', startMs: 300, endMs: 400 }]);
     adapter.setPreviewAnnotation('a');
@@ -423,9 +571,9 @@ describe('createWaveformAdapter', () => {
 
   it('disconnects palette observation, stops listeners, and destroys only once', () => {
     const fixture = createDouble();
-    const { disposers, regions, wave } = fixture;
+    const { pluginDisposers, waveDisposers, regions, wave } = fixture;
     const disconnect = vi.spyOn(MutationObserver.prototype, 'disconnect');
-    const adapter = createWaveformAdapter(document.createElement('div'), peaks, vi.fn(), () => wave as never);
+    const adapter = createWaveformAdapter(document.createElement('div'), peaks, createHandlers(), () => wave as never);
     const stopDrag = regions.enableDragSelection.mock.results[0]?.value as ReturnType<typeof vi.fn>;
     adapter.setSelection({ startMs: 100, endMs: 200 });
     adapter.setAnnotations([{ id: 'a', startMs: 300, endMs: 400 }]);
@@ -438,10 +586,10 @@ describe('createWaveformAdapter', () => {
 
     for (const region of managed) expect(region.remove).toHaveBeenCalledOnce();
     expect(stopDrag).toHaveBeenCalledOnce();
-    expect(disposers[0]).toHaveBeenCalledOnce();
-    expect(disposers[1]).toHaveBeenCalledOnce();
-    expect(disposers[2]).toHaveBeenCalledOnce();
-    expect(disposers[3]).toHaveBeenCalledOnce();
+    expect(pluginDisposers.get('region-initialized')).toHaveBeenCalledOnce();
+    expect(pluginDisposers.get('region-created')).toHaveBeenCalledOnce();
+    expect(pluginDisposers.get('region-updated')).toHaveBeenCalledOnce();
+    expect(waveDisposers.get('ready')).toHaveBeenCalledOnce();
     expect(disconnect).toHaveBeenCalledOnce();
     expect(wave.destroy).toHaveBeenCalledOnce();
   });

@@ -182,10 +182,84 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await page.getByText('Ctrl + wheel to zoom').hover();
   await expect(previewRegions).toHaveCount(0);
 
+  const stateBeforeWaveformHover = await page.evaluate(() => {
+    const testState = (globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: {
+        saveProjectCalls: number;
+        savedProject: Project | null;
+        nativeCalls: Array<{ command: string }>;
+      };
+    }).__LIGHTSCRIBE_TEST__;
+    return {
+      saveProjectCalls: testState.saveProjectCalls,
+      project: structuredClone(testState.savedProject),
+      nativeCalls: structuredClone(testState.nativeCalls)
+    };
+  });
+  const boundariesBeforeWaveformHover = {
+    start: await page.getByLabel('Start milliseconds').inputValue(),
+    end: await page.getByLabel('End milliseconds').inputValue()
+  };
+  await passiveRegions.first().hover({ position: { x: 1, y: 1 } });
+  await expect(previewRegions).toHaveCount(1);
+  await page.waitForTimeout(400);
+  const stateAfterWaveformHover = await page.evaluate(() => {
+    const testState = (globalThis as typeof globalThis & {
+      __LIGHTSCRIBE_TEST__: {
+        saveProjectCalls: number;
+        savedProject: Project | null;
+        nativeCalls: Array<{ command: string }>;
+      };
+    }).__LIGHTSCRIBE_TEST__;
+    return {
+      saveProjectCalls: testState.saveProjectCalls,
+      project: structuredClone(testState.savedProject),
+      nativeCalls: structuredClone(testState.nativeCalls)
+    };
+  });
+  expect(stateAfterWaveformHover).toEqual(stateBeforeWaveformHover);
+  expect({
+    start: await page.getByLabel('Start milliseconds').inputValue(),
+    end: await page.getByLabel('End milliseconds').inputValue()
+  }).toEqual(boundariesBeforeWaveformHover);
+  expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute('aria-current'))
+  )).toEqual([null, null]);
+
+  await page.getByText('Ctrl + wheel to zoom').hover();
+  await expect(previewRegions).toHaveCount(0);
+  await passiveRegions.nth(1).dblclick();
+  await expect(page.getByLabel('Start milliseconds')).toHaveValue('1500');
+  await expect(page.getByLabel('End milliseconds')).toHaveValue('2500');
+  await expect(annotations.locator('.annotation-row').nth(1)).toHaveAttribute('aria-current', 'true');
+  expect(await page.locator('.selection-inspector .actions button').evaluateAll((buttons) =>
+    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim())
+  )).toEqual(['Update annotation', 'Add annotation', 'Clear annotation']);
+
+  const selectedTranscription = page.getByRole('textbox', { name: 'Transcription' });
+  await selectedTranscription.fill('Second annotation updated');
+  await page.getByRole('button', { name: 'Update annotation' }).click();
+  await expect(annotations).toContainText('Second annotation updated');
+  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Add annotation' }).click();
+  await expect(page.getByLabel('Start milliseconds')).toHaveValue('1500');
+  await expect(page.getByLabel('End milliseconds')).toHaveValue('2500');
+  expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
+    rows.map((row) => row.getAttribute('aria-current'))
+  )).toEqual([null, null]);
+  await expect(selectedTranscription).toHaveValue('');
+  await expect(page.getByLabel('Notes')).toHaveValue('');
+  await expect(page.getByLabel('Speaker').locator('option:checked')).toHaveText('speaker_1');
+  await expect(page.getByLabel('Event type')).toHaveValue('speech');
+  await expect(page.getByLabel('Intelligibility')).toHaveValue('highly_intelligible');
+  await expect(page.getByLabel('Overlap')).toHaveValue('none');
+  await expect(page.getByLabel('Confidence')).toHaveValue('high');
+  await expect(page.getByRole('button', { name: /^Remove .* acoustic tag$/ })).toHaveCount(0);
+  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+
   await firstRow.click();
   await expect(page.getByLabel('Start milliseconds')).toHaveValue('1000');
   await expect(page.getByLabel('End milliseconds')).toHaveValue('2000');
-  const selectedTranscription = page.getByRole('textbox', { name: 'Transcription' });
   const originalTranscription = await selectedTranscription.inputValue();
   expect(originalTranscription).not.toBe('');
   await expect(page.getByRole('button', { name: 'Update annotation' })).toBeVisible();
@@ -208,7 +282,9 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
       __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
   ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
-  await page.getByRole('button', { name: 'Clear' }).click();
+  const clearAnnotation = page.getByRole('button', { name: 'Clear annotation' });
+  await expect(clearAnnotation).toHaveText('X');
+  await clearAnnotation.click();
   await expect(page.getByRole('button', { name: 'Add annotation' })).toBeVisible();
 
   const startBoundary = page.getByLabel('Start milliseconds');
@@ -342,7 +418,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
     {
       startMs: 1_500,
       endMs: 2_500,
-      transcription: 'はい',
+      transcription: 'Second annotation updated',
       overlap: 'overlap',
       speaker: 'speaker_2',
       tags: ['breath']

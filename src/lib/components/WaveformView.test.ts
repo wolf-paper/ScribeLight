@@ -28,6 +28,8 @@ describe('WaveformView', () => {
     };
     const createAdapter = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
     const onchange = vi.fn();
+    const onannotationpreview = vi.fn();
+    const onannotationactivate = vi.fn();
     const view = render(WaveformView, {
       peaks: initialPeaks,
       selection: { startMs: 100, endMs: 200 },
@@ -36,11 +38,17 @@ describe('WaveformView', () => {
       annotations,
       previewAnnotationId: 'b',
       onchange,
+      onannotationpreview,
+      onannotationactivate,
       createAdapter
     });
 
     expect(screen.getByRole('img', { name: 'Audio waveform' })).toBeInTheDocument();
-    expect(createAdapter).toHaveBeenCalledWith(expect.any(HTMLDivElement), initialPeaks, onchange);
+    expect(createAdapter).toHaveBeenCalledWith(expect.any(HTMLDivElement), initialPeaks, {
+      onSelectionChange: onchange,
+      onAnnotationPreview: onannotationpreview,
+      onAnnotationActivate: onannotationactivate
+    });
     expect(first.setAnnotations).toHaveBeenCalledWith(annotations);
     expect(first.setPreviewAnnotation).toHaveBeenCalledWith('b');
     expect(first.setSelection).toHaveBeenCalledWith({ startMs: 100, endMs: 200 });
@@ -62,7 +70,11 @@ describe('WaveformView', () => {
     });
 
     expect(first.destroy).toHaveBeenCalledOnce();
-    expect(createAdapter).toHaveBeenLastCalledWith(expect.any(HTMLDivElement), replacement, onchange);
+    expect(createAdapter).toHaveBeenLastCalledWith(expect.any(HTMLDivElement), replacement, {
+      onSelectionChange: onchange,
+      onAnnotationPreview: onannotationpreview,
+      onAnnotationActivate: onannotationactivate
+    });
     expect(second.setAnnotations).toHaveBeenCalledWith(updatedAnnotations);
     expect(second.setPreviewAnnotation).toHaveBeenCalledWith(null);
     expect(second.setSelection).toHaveBeenCalledWith({ startMs: 300, endMs: 400 });

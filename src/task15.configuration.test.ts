@@ -104,13 +104,15 @@ describe('Task 15 release configuration', () => {
 
     expect(app).toContain('let previewAnnotationId = $state<string | null>(null);');
     expect(app).toContain('onpreview={(id) =>');
+    expect(app).toContain('onannotationpreview={previewWaveformAnnotation}');
+    expect(app).toContain('onannotationactivate={activateWaveformAnnotation}');
     expect(timeline).toContain('<WaveformView {peaks} {annotations} {previewAnnotationId}');
     expect(waveform).toContain('adapter.setAnnotations(annotations);');
     expect(waveform).toContain('adapter.setPreviewAnnotation(previewAnnotationId);');
     expect(readme).toContain('active transcription editor');
-    expect(readme).toContain('passive waveform annotations');
-    expect(readme).toContain('visual preview');
-    expect(readme).toContain('row activation');
+    expect(readme).toContain('hovering a saved waveform region previews it');
+    expect(readme).toContain('double-clicking activates it');
+    expect(readme).toContain('[Waveform Region and Inspector QoL Design](docs/superpowers/specs/2026-07-22-waveform-region-inspector-qol-design.md)');
     expect(readme).toContain('[Transcription and Waveform QoL Design](docs/superpowers/specs/2026-07-21-transcription-waveform-qol-design.md)');
     expect(readme).toContain('supersedes the editor, saved-annotation list, and waveform-interaction sections of that UI rework design');
   });

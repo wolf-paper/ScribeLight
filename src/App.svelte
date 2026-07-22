@@ -604,6 +604,16 @@
     projectStore.setSelection({ startMs, endMs });
   }
 
+  function previewWaveformAnnotation(annotationId: string, previewing: boolean): void {
+    if (transitionBusy) return;
+    if (previewing) previewAnnotationId = annotationId;
+    else if (previewAnnotationId === annotationId) previewAnnotationId = null;
+  }
+
+  function activateWaveformAnnotation(annotationId: string): void {
+    if (!transitionBusy) projectStore.selectAnnotation(annotationId);
+  }
+
   function reportPromise(request: Promise<unknown>): Promise<void> {
     return request.then(() => undefined).catch((error) => { persistentError = formatUnknownError(error); });
   }
@@ -754,6 +764,8 @@
         {peaks}
         annotations={waveformAnnotations}
         {previewAnnotationId}
+        onannotationpreview={previewWaveformAnnotation}
+        onannotationactivate={activateWaveformAnnotation}
         playheadMs={playback.positionMs}
         disabled={transitionBusy}
       />

@@ -11,18 +11,32 @@ const waveformAdapter = vi.hoisted(() => ({
   setZoom: vi.fn(),
   destroy: vi.fn()
 }));
+const waveformFactory = vi.hoisted(() => ({
+  interactions: null as null | {
+    onSelectionChange(selection: { startMs: number; endMs: number }): void;
+    onAnnotationPreview(annotationId: string, previewing: boolean): void;
+    onAnnotationActivate(annotationId: string): void;
+  }
+}));
 
 vi.mock('../waveform/wavesurferAdapter', () => ({
-  createWaveformAdapter: () => waveformAdapter
+  createWaveformAdapter: (_container: HTMLElement, _peaks: unknown, interactions: NonNullable<typeof waveformFactory.interactions>) => {
+    waveformFactory.interactions = interactions;
+    return waveformAdapter;
+  }
 }));
 
 function renderTimeline(selection = { startMs: 100, endMs: 200 }) {
   const onchange = vi.fn();
+  const onannotationpreview = vi.fn();
+  const onannotationactivate = vi.fn();
   render(TimelineWorkspace, {
     durationMs: 10_000,
     format: 'seconds',
     selection,
-    onchange
+    onchange,
+    onannotationpreview,
+    onannotationactivate
   });
   const viewport = screen.getByTestId('timeline-viewport');
   Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 500 });
@@ -30,7 +44,7 @@ function renderTimeline(selection = { startMs: 100, endMs: 200 }) {
     bottom: 0, height: 0, left: 0, right: 500, top: 0, width: 500, x: 0, y: 0,
     toJSON: () => ({})
   });
-  return { onchange, viewport };
+  return { onchange, onannotationpreview, onannotationactivate, viewport };
 }
 
 describe('TimelineWorkspace', () => {
@@ -67,11 +81,15 @@ describe('TimelineWorkspace', () => {
       { id: 'b', startMs: 1_500, endMs: 2_500 }
     ];
     const onchange = vi.fn();
+    const onannotationpreview = vi.fn();
+    const onannotationactivate = vi.fn();
     render(TimelineWorkspace, {
       durationMs: 10_000,
       format: 'seconds',
       selection: { startMs: 100, endMs: 200 },
       onchange,
+      onannotationpreview,
+      onannotationactivate,
       peaks: fakePeaks(10_000),
       annotations,
       previewAnnotationId: 'b'
@@ -87,6 +105,10 @@ describe('TimelineWorkspace', () => {
       expect(waveformAdapter.setAnnotations).toHaveBeenCalledWith(annotations);
       expect(waveformAdapter.setPreviewAnnotation).toHaveBeenCalledWith('b');
     });
+    waveformFactory.interactions?.onAnnotationPreview('a', true);
+    waveformFactory.interactions?.onAnnotationActivate('b');
+    expect(onannotationpreview).toHaveBeenCalledWith('a', true);
+    expect(onannotationactivate).toHaveBeenCalledWith('b');
     expect(Array.from(screen.getByTestId('timeline-content').children)
       .map((element) => element.getAttribute('data-timeline-layer')))
       .toEqual(['top-ruler', 'loop-selection', 'waveform', 'bottom-ruler']);
@@ -126,7 +148,10 @@ describe('TimelineWorkspace', () => {
 
   it('does not create invalid dimensions for a zero duration or unmeasurable viewport', () => {
     const onchange = vi.fn();
-    render(TimelineWorkspace, { durationMs: 0, format: 'clock', selection: null, onchange });
+    render(TimelineWorkspace, {
+      durationMs: 0, format: 'clock', selection: null, onchange,
+      onannotationpreview: vi.fn(), onannotationactivate: vi.fn()
+    });
 
     const content = screen.getByTestId('timeline-content');
     expect(content).toHaveStyle({ width: '0px' });
@@ -135,7 +160,10 @@ describe('TimelineWorkspace', () => {
 
   it('keeps every layer at one effective width before and after measuring a zero-length viewport', async () => {
     const onchange = vi.fn();
-    render(TimelineWorkspace, { durationMs: 0, format: 'clock', selection: null, onchange });
+    render(TimelineWorkspace, {
+      durationMs: 0, format: 'clock', selection: null, onchange,
+      onannotationpreview: vi.fn(), onannotationactivate: vi.fn()
+    });
     const viewport = screen.getByTestId('timeline-viewport');
     Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 500 });
 
@@ -159,7 +187,9 @@ describe('TimelineWorkspace', () => {
       format: 'seconds',
       selection: { startMs: 50, endMs: 200 },
       playheadMs: 200,
-      onchange
+      onchange,
+      onannotationpreview: vi.fn(),
+      onannotationactivate: vi.fn()
     });
     const viewport = screen.getByTestId('timeline-viewport');
     Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 900 });
@@ -190,7 +220,9 @@ describe('TimelineWorkspace', () => {
       durationMs: 1_000,
       format: 'seconds',
       selection: { startMs: 100, endMs: 200 },
-      onchange
+      onchange,
+      onannotationpreview: vi.fn(),
+      onannotationactivate: vi.fn()
     });
     const viewport = screen.getByTestId('timeline-viewport');
     Object.defineProperty(viewport, 'clientWidth', { configurable: true, value: 500 });

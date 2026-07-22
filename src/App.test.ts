@@ -14,9 +14,19 @@ const waveformSpies = vi.hoisted(() => ({
   setZoom: vi.fn(),
   destroy: vi.fn()
 }));
+const waveformInteractions = vi.hoisted(() => ({
+  latest: null as null | {
+    onSelectionChange(selection: { startMs: number; endMs: number }): void;
+    onAnnotationPreview(annotationId: string, previewing: boolean): void;
+    onAnnotationActivate(annotationId: string): void;
+  }
+}));
 
 vi.mock('./lib/waveform/wavesurferAdapter', () => ({
-  createWaveformAdapter: () => waveformSpies
+  createWaveformAdapter: (_container: HTMLElement, _peaks: unknown, interactions: NonNullable<typeof waveformInteractions.latest>) => {
+    waveformInteractions.latest = interactions;
+    return waveformSpies;
+  }
 }));
 
 function deferred<T>() {
@@ -58,6 +68,7 @@ describe('App', () => {
     localStorage.clear();
     delete document.documentElement.dataset.palette;
     Object.values(waveformSpies).forEach((spy) => spy.mockClear());
+    waveformInteractions.latest = null;
   });
 
   it('identifies the product and empty state without touching a live Tauri window', () => {
@@ -157,6 +168,32 @@ describe('App', () => {
     const loopCallsBeforeHover = bridge.audioSetLoop.mock.calls.length;
     const saveCallsBeforeHover = bridge.saveProject.mock.calls.length;
     const savedProjectsBeforeHover = structuredClone(bridge.savedProjects);
+    const boundariesBeforeHover = {
+      start: (screen.getByLabelText('Start milliseconds') as HTMLInputElement).value,
+      end: (screen.getByLabelText('End milliseconds') as HTMLInputElement).value
+    };
+    const activeRowsBeforeHover = [
+      firstRow.getAttribute('aria-current'),
+      secondRow.getAttribute('aria-current')
+    ];
+    const interactions = waveformInteractions.latest!;
+
+    interactions.onAnnotationPreview('second', true);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second'));
+    interactions.onAnnotationPreview('first', true);
+    interactions.onAnnotationPreview('second', false);
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(Number(boundariesBeforeHover.start));
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(Number(boundariesBeforeHover.end));
+    expect([firstRow.getAttribute('aria-current'), secondRow.getAttribute('aria-current')])
+      .toEqual(activeRowsBeforeHover);
+    expect(bridge.audioSetLoop).toHaveBeenCalledTimes(loopCallsBeforeHover);
+    expect(bridge.saveProject).toHaveBeenCalledTimes(saveCallsBeforeHover);
+    expect(bridge.savedProjects).toEqual(savedProjectsBeforeHover);
+    interactions.onAnnotationPreview('first', false);
+
     await fireEvent.pointerEnter(secondRow);
 
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second'));
@@ -170,9 +207,9 @@ describe('App', () => {
 
     await fireEvent.pointerLeave(secondRow, { relatedTarget: null });
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
-    await fireEvent.click(secondRow);
+    interactions.onAnnotationActivate('second');
 
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_500);
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_500));
     expect(screen.getByLabelText('End milliseconds')).toHaveValue(2_500);
     expect(screen.getByLabelText('Transcription')).toHaveValue('Second transcription');
     expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
@@ -678,7 +715,18 @@ describe('App', () => {
   });
 
   it('blocks project and playback mutations while a native replacement is pending', async () => {
-    const bridge = makeFakeBridge();
+    const identity = fakeIdentity('old.wav');
+    const restored = createProject(identity);
+    restored.annotations = [{
+      ...restored.draft,
+      id: 'saved',
+      startMs: 100,
+      endMs: 200,
+      transcription: 'Saved annotation',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }];
+    const bridge = makeFakeBridge({ identity, restored });
     bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
     const replacement = deferred<ReturnType<typeof fakeIdentity>>();
     bridge.audioOpen.mockImplementation(async (path) => {
@@ -702,6 +750,20 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Add annotation' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDisabled();
     expect(screen.getByLabelText('Audio waveform').closest('.project-workspace')).toHaveProperty('inert', true);
+    const savedRow = screen.getByRole('row', { name: 'Activate annotation Saved annotation' });
+    await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
+    const previewCallsWhileBusy = waveformSpies.setPreviewAnnotation.mock.calls.length;
+    const boundariesWhileBusy = {
+      start: (screen.getByLabelText('Start milliseconds') as HTMLInputElement).value,
+      end: (screen.getByLabelText('End milliseconds') as HTMLInputElement).value
+    };
+    waveformInteractions.latest?.onAnnotationPreview('saved', true);
+    waveformInteractions.latest?.onAnnotationActivate('saved');
+    await Promise.resolve();
+    expect(waveformSpies.setPreviewAnnotation).toHaveBeenCalledTimes(previewCallsWhileBusy);
+    expect(savedRow).not.toHaveAttribute('aria-current');
+    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(Number(boundariesWhileBusy.start));
+    expect(screen.getByLabelText('End milliseconds')).toHaveValue(Number(boundariesWhileBusy.end));
     await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'must be blocked' } });
     await fireEvent.keyDown(window, { key: 'i' });
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel analysis' }));
