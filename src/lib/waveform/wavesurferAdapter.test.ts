@@ -312,7 +312,7 @@ describe('createWaveformAdapter', () => {
     tokens['--color-selection-region'] = 'rgb(221 221 221 / .34)';
     tokens['--color-annotation-region'] = 'rgb(221 221 221 / .14)';
     tokens['--color-annotation-preview'] = 'rgb(221 221 221 / .46)';
-    document.documentElement.dataset.palette = 'arctic-steel';
+    document.documentElement.dataset.palette = 'xenon-arc';
 
     await vi.waitFor(() => expect(fixture.wave.setOptions).toHaveBeenLastCalledWith({
       waveColor: '#aaaaaa',

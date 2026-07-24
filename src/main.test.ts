@@ -37,13 +37,13 @@ describe('main entry point', () => {
 
   it('mounts the Lightscribe shell into the app target', async () => {
     document.body.innerHTML = '<div id="app"></div>';
-    localStorage.setItem('lightscribe.palette', 'ultraviolet-grid');
-    expectedPalette = 'ultraviolet-grid';
+    localStorage.setItem('lightscribe.palette', 'argon-current');
+    expectedPalette = 'argon-current';
 
     const { default: app } = await import('./main');
     const mountedApp = await app;
 
-    expect(document.documentElement.dataset.palette).toBe('ultraviolet-grid');
+    expect(document.documentElement.dataset.palette).toBe('argon-current');
     expect(screen.getByRole('heading', { name: 'Lightscribe' })).toBeInTheDocument();
     expect(mount).toHaveBeenCalledWith(App, {
       target: document.getElementById('app'),

@@ -1,5 +1,12 @@
 export const PALETTE_IDS = [
-  'ion-magenta', 'arctic-steel', 'ultraviolet-grid', 'crimson-scope'
+  'ion-magenta',
+  'neon-ember',
+  'mercury-vapor',
+  'argon-current',
+  'xenon-arc',
+  'krypton-glow',
+  'sodium-vapor',
+  'oxygen-pearl'
 ] as const;
 
 export type PaletteId = typeof PALETTE_IDS[number];

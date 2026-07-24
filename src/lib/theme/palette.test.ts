@@ -13,9 +13,17 @@ import {
 describe('palette preferences', () => {
   it('exposes the approved palettes and falls back to Ion Magenta', () => {
     expect(PALETTE_IDS).toEqual([
-      'ion-magenta', 'arctic-steel', 'ultraviolet-grid', 'crimson-scope'
+      'ion-magenta',
+      'neon-ember',
+      'mercury-vapor',
+      'argon-current',
+      'xenon-arc',
+      'krypton-glow',
+      'sodium-vapor',
+      'oxygen-pearl'
     ]);
     expect(DEFAULT_PALETTE).toBe('ion-magenta');
+    expect(normalizePalette('arctic-steel')).toBe('ion-magenta');
     expect(normalizePalette('unknown')).toBe('ion-magenta');
     expect(normalizePalette(null)).toBe('ion-magenta');
   });
@@ -28,18 +36,18 @@ describe('palette preferences', () => {
     const storage = { setItem: vi.fn(() => { throw new Error('denied'); }) };
     const root = document.documentElement;
 
-    persistPalette('crimson-scope', storage, root);
+    persistPalette('krypton-glow', storage, root);
 
-    expect(root.dataset.palette).toBe('crimson-scope');
-    expect(storage.setItem).toHaveBeenCalledWith(PALETTE_STORAGE_KEY, 'crimson-scope');
+    expect(root.dataset.palette).toBe('krypton-glow');
+    expect(storage.setItem).toHaveBeenCalledWith(PALETTE_STORAGE_KEY, 'krypton-glow');
   });
 
   it('applies a persisted palette when browser storage is unavailable', () => {
     const root = document.createElement('div');
     vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => { throw new Error('denied'); });
 
-    expect(() => persistPalette('arctic-steel', undefined, root)).not.toThrow();
-    expect(root.dataset.palette).toBe('arctic-steel');
+    expect(() => persistPalette('neon-ember', undefined, root)).not.toThrow();
+    expect(root.dataset.palette).toBe('neon-ember');
 
     vi.restoreAllMocks();
   });
@@ -47,9 +55,9 @@ describe('palette preferences', () => {
   it('can apply a palette to an explicit root', () => {
     const root = document.createElement('div');
 
-    applyPalette('arctic-steel', root);
+    applyPalette('xenon-arc', root);
 
-    expect(root.dataset.palette).toBe('arctic-steel');
+    expect(root.dataset.palette).toBe('xenon-arc');
   });
 
   it('assigns deterministic color slots for a stable ID', () => {

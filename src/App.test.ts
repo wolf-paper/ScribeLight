@@ -83,7 +83,7 @@ describe('App', () => {
     expect(() => renderApp()).not.toThrow();
     expect(screen.queryByRole('alert', { name: 'Application error' })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.getByRole('radio', { name: /Ion Magenta/ })).toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Palette' })).toHaveValue('ion-magenta');
   });
 
   it('opens and closes Settings, persists palette changes, and keeps project settings in the modal', async () => {
@@ -98,10 +98,12 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByText('Open a project to manage labels.')).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('radio', { name: /Arctic Steel/ }));
-    expect(storageWrite).toHaveBeenCalledWith(PALETTE_STORAGE_KEY, 'arctic-steel');
-    expect(localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('arctic-steel');
-    expect(document.documentElement).toHaveAttribute('data-palette', 'arctic-steel');
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Palette' }), {
+      target: { value: 'mercury-vapor' }
+    });
+    expect(storageWrite).toHaveBeenCalledWith(PALETTE_STORAGE_KEY, 'mercury-vapor');
+    expect(localStorage.getItem(PALETTE_STORAGE_KEY)).toBe('mercury-vapor');
+    expect(document.documentElement).toHaveAttribute('data-palette', 'mercury-vapor');
     await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
 

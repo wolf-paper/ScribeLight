@@ -9,75 +9,62 @@
 
   const labels: Record<PaletteId, string> = {
     'ion-magenta': 'Ion Magenta',
-    'arctic-steel': 'Arctic Steel',
-    'ultraviolet-grid': 'Ultraviolet Grid',
-    'crimson-scope': 'Crimson Scope'
+    'neon-ember': 'Neon Ember',
+    'mercury-vapor': 'Mercury Vapor',
+    'argon-current': 'Argon Current',
+    'xenon-arc': 'Xenon Arc',
+    'krypton-glow': 'Krypton Glow',
+    'sodium-vapor': 'Sodium Vapor',
+    'oxygen-pearl': 'Oxygen Pearl'
   };
 
   const previews: Record<PaletteId, readonly string[]> = {
-    'ion-magenta': ['#0B0C19', '#111326', '#17182B', '#22213A', '#EF5BAD'],
-    'arctic-steel': ['#0B1015', '#10171E', '#16212B', '#1C2A35', '#38BDF8'],
-    'ultraviolet-grid': ['#11091B', '#170D25', '#1E102E', '#2D1843', '#B978F6'],
-    'crimson-scope': ['#19090D', '#210C12', '#291017', '#3A1922', '#FF647C']
+    'ion-magenta': ['#0B0C19', '#17182B', '#403653', '#EF5BAD', '#71DCE8'],
+    'neon-ember': ['#0F0A09', '#1D1210', '#563126', '#FF5A36', '#FFB347'],
+    'mercury-vapor': ['#071013', '#0D1D23', '#285567', '#39CFE8', '#98F3FF'],
+    'argon-current': ['#0B0A17', '#16132B', '#3B346A', '#7A70FF', '#B5A8FF'],
+    'xenon-arc': ['#080D17', '#101A2B', '#29436E', '#4D8DFF', '#73D8FF'],
+    'krypton-glow': ['#100A17', '#1C1229', '#4B3164', '#BA68E8', '#E6A3FF'],
+    'sodium-vapor': ['#100C0A', '#1E1512', '#573A30', '#FF8E72', '#FFD08A'],
+    'oxygen-pearl': ['#090D10', '#12191E', '#344550', '#B8D2DD', '#F1FCFF']
   };
 
   let { value, disabled = false, onchange }: Props = $props();
 </script>
 
-<fieldset class="palette-selector" {disabled}>
-  <legend>Palette</legend>
-  <div class="palette-options">
+<label class="palette-selector">
+  <span>Palette</span>
+  <select
+    {disabled}
+    value={value}
+    onchange={(event) => onchange(event.currentTarget.value as PaletteId)}
+  >
     {#each PALETTE_IDS as paletteId}
-      <label class="palette-option">
-        <input
-          type="radio"
-          name="palette"
-          value={paletteId}
-          checked={value === paletteId}
-          onchange={() => onchange(paletteId)}
-        />
-        <span class="palette-name">{labels[paletteId]}</span>
-        <span class="palette-swatches" aria-hidden="true">
-          {#each previews[paletteId] as swatch}
-            <span class="palette-swatch" style:background={swatch}></span>
-          {/each}
-        </span>
-      </label>
+      <option value={paletteId}>{labels[paletteId]}</option>
     {/each}
-  </div>
-</fieldset>
+  </select>
+  <span class="palette-swatches" aria-hidden="true">
+    {#each previews[value] as swatch}
+      <span class="palette-swatch" style:background={swatch}></span>
+    {/each}
+  </span>
+</label>
 
 <style>
   .palette-selector {
     display: grid;
-    gap: .5rem;
-    border: 0;
-    margin: 0;
-    padding: 0;
+    gap: .35rem;
+    max-width: 22rem;
   }
 
-  .palette-options {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: .5rem;
-  }
-
-  .palette-option {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: .35rem .5rem;
-    align-items: center;
-    padding: .5rem;
-    border: 1px solid var(--color-border);
-    background: var(--color-panel);
-  }
+  .palette-selector select { width: 100%; }
 
   .palette-swatches {
-    grid-column: 1 / -1;
     display: flex;
     overflow: hidden;
     border: 1px solid var(--color-border);
+    border-radius: .25rem;
   }
 
-  .palette-swatch { flex: 1; block-size: .65rem; }
+  .palette-swatch { flex: 1; block-size: .75rem; }
 </style>

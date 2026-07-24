@@ -52,73 +52,165 @@
   font-synthesis: none;
 }
 
-:root[data-palette="arctic-steel"] {
-  --color-canvas: #0B1015;
-  --color-toolbar: #10171E;
-  --color-panel: #16212B;
-  --color-raised: #1C2A35;
-  --color-input: #1C2A35;
-  --color-border: #344958;
-  --color-text-primary: #F1F6F8;
-  --color-text-secondary: #A8BAC4;
-  --color-accent: #38BDF8;
-  --color-waveform: #A5F3FC;
-  --color-waveform-active: #D7FAFF;
-  --color-selection-region: rgb(56 189 248 / .28);
-  --color-annotation-region: rgb(56 189 248 / .12);
-  --color-annotation-preview: rgb(56 189 248 / .44);
-  --color-selection-wash: #1B3C4E;
-  --color-loop-boundary: #38BDF8;
-  --color-playhead: #E0F9FF;
-  --color-focus: #38BDF8;
-  --color-scrollbar-track: #16212B;
-  --color-scrollbar-thumb: #344958;
+:root[data-palette="neon-ember"] {
+  --color-canvas: #0F0A09;
+  --color-toolbar: #17100E;
+  --color-panel: #1D1210;
+  --color-raised: #2A1B17;
+  --color-input: #2A1B17;
+  --color-border: #563126;
+  --color-text-primary: #FFF5EF;
+  --color-text-secondary: #CDB3A7;
+  --color-accent: #FF5A36;
+  --color-waveform: #FFB347;
+  --color-waveform-active: #FFD38A;
+  --color-selection-region: rgb(255 90 54 / .28);
+  --color-annotation-region: rgb(255 90 54 / .12);
+  --color-annotation-preview: rgb(255 90 54 / .44);
+  --color-selection-wash: #3B211A;
+  --color-loop-boundary: #FF744F;
+  --color-playhead: #FFE0BD;
+  --color-focus: #FF5A36;
+  --color-scrollbar-track: #1D1210;
+  --color-scrollbar-thumb: #563126;
 }
 
-:root[data-palette="ultraviolet-grid"] {
-  --color-canvas: #11091B;
-  --color-toolbar: #170D25;
-  --color-panel: #1E102E;
-  --color-raised: #2D1843;
-  --color-input: #2D1843;
-  --color-border: #56326F;
-  --color-text-primary: #F8F2FC;
-  --color-text-secondary: #C1AACF;
-  --color-accent: #B978F6;
-  --color-waveform: #E2B2FF;
-  --color-waveform-active: #F0D4FF;
-  --color-selection-region: rgb(185 120 246 / .28);
-  --color-annotation-region: rgb(185 120 246 / .12);
-  --color-annotation-preview: rgb(185 120 246 / .44);
-  --color-selection-wash: #3A1E50;
-  --color-loop-boundary: #C98AFF;
-  --color-playhead: #F7D8FF;
-  --color-focus: #B978F6;
-  --color-scrollbar-track: #1E102E;
-  --color-scrollbar-thumb: #56326F;
+:root[data-palette="mercury-vapor"] {
+  --color-canvas: #071013;
+  --color-toolbar: #0A171B;
+  --color-panel: #0D1D23;
+  --color-raised: #142C34;
+  --color-input: #142C34;
+  --color-border: #285567;
+  --color-text-primary: #F1FDFF;
+  --color-text-secondary: #A6C6CE;
+  --color-accent: #39CFE8;
+  --color-waveform: #98F3FF;
+  --color-waveform-active: #D1FAFF;
+  --color-selection-region: rgb(57 207 232 / .28);
+  --color-annotation-region: rgb(57 207 232 / .12);
+  --color-annotation-preview: rgb(57 207 232 / .44);
+  --color-selection-wash: #143842;
+  --color-loop-boundary: #45DCEE;
+  --color-playhead: #E4FCFF;
+  --color-focus: #39CFE8;
+  --color-scrollbar-track: #0D1D23;
+  --color-scrollbar-thumb: #285567;
 }
 
-:root[data-palette="crimson-scope"] {
-  --color-canvas: #19090D;
-  --color-toolbar: #210C12;
-  --color-panel: #291017;
-  --color-raised: #3A1922;
-  --color-input: #3A1922;
-  --color-border: #66303A;
-  --color-text-primary: #FFF5F7;
-  --color-text-secondary: #D2ADB5;
-  --color-accent: #FF647C;
-  --color-waveform: #FFB0BC;
-  --color-waveform-active: #FFD3DA;
-  --color-selection-region: rgb(255 100 124 / .28);
-  --color-annotation-region: rgb(255 100 124 / .12);
-  --color-annotation-preview: rgb(255 100 124 / .44);
-  --color-selection-wash: #4B1D28;
-  --color-loop-boundary: #FF7A8E;
-  --color-playhead: #FFE0E5;
-  --color-focus: #FF647C;
-  --color-scrollbar-track: #291017;
-  --color-scrollbar-thumb: #66303A;
+:root[data-palette="argon-current"] {
+  --color-canvas: #0B0A17;
+  --color-toolbar: #111024;
+  --color-panel: #16132B;
+  --color-raised: #242044;
+  --color-input: #242044;
+  --color-border: #3B346A;
+  --color-text-primary: #F8F5FF;
+  --color-text-secondary: #B9B2D4;
+  --color-accent: #7A70FF;
+  --color-waveform: #B5A8FF;
+  --color-waveform-active: #DDD7FF;
+  --color-selection-region: rgb(122 112 255 / .28);
+  --color-annotation-region: rgb(122 112 255 / .12);
+  --color-annotation-preview: rgb(122 112 255 / .44);
+  --color-selection-wash: #282351;
+  --color-loop-boundary: #9189FF;
+  --color-playhead: #EEE9FF;
+  --color-focus: #7A70FF;
+  --color-scrollbar-track: #16132B;
+  --color-scrollbar-thumb: #3B346A;
+}
+
+:root[data-palette="xenon-arc"] {
+  --color-canvas: #080D17;
+  --color-toolbar: #0C1422;
+  --color-panel: #101A2B;
+  --color-raised: #192943;
+  --color-input: #192943;
+  --color-border: #29436E;
+  --color-text-primary: #F4F8FF;
+  --color-text-secondary: #ACBBD2;
+  --color-accent: #4D8DFF;
+  --color-waveform: #73D8FF;
+  --color-waveform-active: #BCEFFF;
+  --color-selection-region: rgb(77 141 255 / .28);
+  --color-annotation-region: rgb(77 141 255 / .12);
+  --color-annotation-preview: rgb(77 141 255 / .44);
+  --color-selection-wash: #17325A;
+  --color-loop-boundary: #69A1FF;
+  --color-playhead: #DDF4FF;
+  --color-focus: #4D8DFF;
+  --color-scrollbar-track: #101A2B;
+  --color-scrollbar-thumb: #29436E;
+}
+
+:root[data-palette="krypton-glow"] {
+  --color-canvas: #100A17;
+  --color-toolbar: #170F21;
+  --color-panel: #1C1229;
+  --color-raised: #2B1C3D;
+  --color-input: #2B1C3D;
+  --color-border: #4B3164;
+  --color-text-primary: #FBF4FF;
+  --color-text-secondary: #C8B2D4;
+  --color-accent: #BA68E8;
+  --color-waveform: #E6A3FF;
+  --color-waveform-active: #F2CEFF;
+  --color-selection-region: rgb(186 104 232 / .28);
+  --color-annotation-region: rgb(186 104 232 / .12);
+  --color-annotation-preview: rgb(186 104 232 / .44);
+  --color-selection-wash: #39214B;
+  --color-loop-boundary: #CB82EE;
+  --color-playhead: #FBE5FF;
+  --color-focus: #BA68E8;
+  --color-scrollbar-track: #1C1229;
+  --color-scrollbar-thumb: #4B3164;
+}
+
+:root[data-palette="sodium-vapor"] {
+  --color-canvas: #100C0A;
+  --color-toolbar: #17110F;
+  --color-panel: #1E1512;
+  --color-raised: #2D211C;
+  --color-input: #2D211C;
+  --color-border: #573A30;
+  --color-text-primary: #FFF7F1;
+  --color-text-secondary: #D0B7AA;
+  --color-accent: #FF8E72;
+  --color-waveform: #FFD08A;
+  --color-waveform-active: #FFE4B7;
+  --color-selection-region: rgb(255 142 114 / .28);
+  --color-annotation-region: rgb(255 142 114 / .12);
+  --color-annotation-preview: rgb(255 142 114 / .44);
+  --color-selection-wash: #42251F;
+  --color-loop-boundary: #FFA58E;
+  --color-playhead: #FFF0D8;
+  --color-focus: #FF8E72;
+  --color-scrollbar-track: #1E1512;
+  --color-scrollbar-thumb: #573A30;
+}
+
+:root[data-palette="oxygen-pearl"] {
+  --color-canvas: #090D10;
+  --color-toolbar: #0D1317;
+  --color-panel: #12191E;
+  --color-raised: #1D2930;
+  --color-input: #1D2930;
+  --color-border: #344550;
+  --color-text-primary: #F8FCFE;
+  --color-text-secondary: #B5C4CC;
+  --color-accent: #B8D2DD;
+  --color-waveform: #F1FCFF;
+  --color-waveform-active: #FFFFFF;
+  --color-selection-region: rgb(184 210 221 / .28);
+  --color-annotation-region: rgb(184 210 221 / .12);
+  --color-annotation-preview: rgb(184 210 221 / .44);
+  --color-selection-wash: #25343C;
+  --color-loop-boundary: #D1E7EF;
+  --color-playhead: #FFFFFF;
+  --color-focus: #B8D2DD;
+  --color-scrollbar-track: #12191E;
+  --color-scrollbar-thumb: #344550;
 }
 
 * { box-sizing: border-box; }
@@ -197,7 +289,6 @@ input[type="radio"]:disabled,
 input[type="range"]:disabled { accent-color: var(--color-disabled-accent); }
 input[type="range"]:disabled::-webkit-slider-runnable-track { background: var(--color-disabled-surface); }
 input[type="range"]:disabled::-webkit-slider-thumb { background: var(--color-disabled-accent); }
-.palette-selector:disabled .palette-option { color: var(--color-disabled-text); background: var(--color-disabled-surface); border-color: var(--color-disabled-border); }
 
 :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
@@ -438,8 +529,6 @@ input[type="range"]:disabled::-webkit-slider-thumb { background: var(--color-dis
 .label-name { display: flex; align-items: center; gap: .4rem; }
 .label-manager > label { max-width: 22rem; }
 .settings-empty { margin: 0; color: var(--color-text-secondary); }
-.palette-option:has(input:checked) { background: var(--color-selection-wash); border-color: var(--color-accent); }
-
 .timeline-viewport,
 .annotation-list-scroll,
 .annotation-dashboard .inspector-body,

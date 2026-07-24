@@ -49,7 +49,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('link', { name: 'Appearance' })).toHaveAttribute('href', '#settings-appearance');
     expect(screen.getByRole('link', { name: 'Project labels' })).toHaveAttribute('href', '#settings-project-labels');
     expect(screen.getByRole('link', { name: 'Export' })).toHaveAttribute('href', '#settings-export');
-    expect(screen.getAllByRole('radio')).toHaveLength(4);
+    expect(screen.getByRole('combobox', { name: 'Palette' })).toHaveValue('ion-magenta');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close settings' })).toHaveFocus());
     expect(showModal).toHaveBeenCalledTimes(1);
 
@@ -84,14 +84,16 @@ describe('SettingsDialog', () => {
     const handlers = props(store);
     render(SettingsDialog, handlers);
 
-    await fireEvent.click(screen.getByRole('radio', { name: /Arctic Steel/ }));
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Palette' }), {
+      target: { value: 'sodium-vapor' }
+    });
     const policy = screen.getByRole('combobox', { name: 'Multiline export policy' });
     expect(policy).toHaveTextContent('Escape line breaks as \\n');
     expect(policy).toHaveTextContent('Replace line breaks with spaces');
     expect(policy).toHaveTextContent('Preserve line breaks in quoted fields');
     await fireEvent.change(policy, { target: { value: 'quoted' } });
 
-    expect(handlers.onpalette).toHaveBeenCalledWith('arctic-steel');
+    expect(handlers.onpalette).toHaveBeenCalledWith('sodium-vapor');
     expect(handlers.onpolicy).toHaveBeenCalledWith('quoted');
   });
 
@@ -105,10 +107,10 @@ describe('SettingsDialog', () => {
     await fireEvent.change(policy, { target: { value: 'quoted' } });
     expect(handlers.onpolicy).not.toHaveBeenCalled();
 
-    const palette = screen.getByRole('radio', { name: /Arctic Steel/ });
+    const palette = screen.getByRole('combobox', { name: 'Palette' });
     expect(palette).toBeEnabled();
-    await fireEvent.click(palette);
-    expect(handlers.onpalette).toHaveBeenCalledWith('arctic-steel');
+    await fireEvent.change(palette, { target: { value: 'sodium-vapor' } });
+    expect(handlers.onpalette).toHaveBeenCalledWith('sodium-vapor');
   });
 
   it('closes from Escape and the close button', async () => {
