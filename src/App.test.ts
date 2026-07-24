@@ -1287,7 +1287,7 @@ describe('App', () => {
     expect(bridge.audioClose).toHaveBeenCalledTimes(1);
   });
 
-  it('restarts an active selection before toolbar playback and never seeks while pausing', async () => {
+  it('restarts an active selection before toolbar playback with Loop enabled and never seeks while pausing', async () => {
     const bridge = makeFakeBridge();
     const nativeOrder: string[] = [];
     bridge.audioSeek.mockImplementation(async (milliseconds) => {
@@ -1306,6 +1306,8 @@ describe('App', () => {
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
     await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
+    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Loop on' })).toBeInTheDocument());
     bridge.audioSeek.mockClear();
     bridge.audioPlay.mockClear();
     bridge.audioPause.mockClear();
@@ -1320,6 +1322,66 @@ describe('App', () => {
     await waitFor(() => expect(nativeOrder).toEqual([
       'seek:250', 'play', 'pause', 'seek:250', 'play'
     ]));
+  });
+
+  it('does not play replacement audio after a pending selection startup is invalidated', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const pendingSeek = deferred<void>();
+    bridge.audioSeek.mockImplementationOnce(async (milliseconds) => {
+      await pendingSeek.promise;
+      bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
+    });
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+    waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenCalledWith(250));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(screen.getByText('new.wav')).toBeInTheDocument());
+    expect(bridge.currentNativePath).toBe('new.wav');
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+
+    pendingSeek.resolve();
+    await waitFor(() => expect(bridge.snapshot.positionMs).toBe(250));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(bridge.currentNativePath).toBe('new.wav');
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+  });
+
+  it('ignores a Space playback input while toolbar selection startup is pending', async () => {
+    const bridge = makeFakeBridge();
+    const pendingSeek = deferred<void>();
+    bridge.audioSeek.mockImplementation(async (milliseconds) => {
+      await pendingSeek.promise;
+      bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
+    });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    waveformInteractions.latest?.onSelectionChange({ startMs: 300, endMs: 700 });
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300));
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenCalledTimes(1));
+    const space = new KeyboardEvent('keydown', {
+      code: 'Space', key: ' ', bubbles: true, cancelable: true
+    });
+    window.dispatchEvent(space);
+
+    expect(space.defaultPrevented).toBe(true);
+    expect(bridge.audioSeek).toHaveBeenCalledTimes(1);
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+
+    pendingSeek.resolve();
+    await waitFor(() => expect(bridge.audioPlay).toHaveBeenCalledTimes(1));
+    expect(bridge.audioSeek).toHaveBeenCalledTimes(1);
   });
 
   it('restarts an active selection before playback from the Space shortcut', async () => {

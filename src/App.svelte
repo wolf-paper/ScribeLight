@@ -99,6 +99,7 @@
   let lastSaveError: string | null = null;
   let lastPlaybackError: string | null = null;
   let nativePreservationFailures = 0;
+  let playbackStart: Promise<void> | null = null;
 
   class NativePreservationError extends Error {}
 
@@ -661,15 +662,33 @@
     });
   }
 
-  async function startPlayback(): Promise<void> {
-    const selection = get(projectStore).project?.activeSelection;
-    if (selection) await audioSession.seek(selection.startMs);
-    await audioSession.play();
+  function startPlayback(): Promise<void> {
+    if (playbackStart) return playbackStart;
+    const generation = operationGeneration;
+    const activeSelection = get(projectStore).project?.activeSelection;
+    const selection = activeSelection ? { ...activeSelection } : null;
+    let request: Promise<void>;
+    request = (async () => {
+      if (selection) await audioSession.seek(selection.startMs);
+      const state = get(audioSession).state;
+      if (!isCurrent(generation) || transitionBusy || closePromise
+        || (state !== 'paused' && state !== 'playing')) return;
+      await audioSession.play();
+    })().finally(() => {
+      if (playbackStart === request) playbackStart = null;
+    });
+    playbackStart = request;
+    return request;
   }
 
   function togglePlay(): void {
     if (transitionBusy || closePromise) return;
-    void reportPromise(playback.state === 'playing' ? audioSession.pause() : startPlayback());
+    const snapshot = get(audioSession);
+    if (snapshot.state === 'playing') {
+      void reportPromise(audioSession.pause());
+    } else if (!playbackStart) {
+      void reportPromise(startPlayback());
+    }
   }
 
   function toggleLoop(): void {

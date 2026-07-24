@@ -86,6 +86,16 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
   await expect(page.getByLabel('End milliseconds')).toHaveValue('1000');
   await expect(page.getByRole('button', { name: 'Move loop selection' })).toBeVisible();
+  const waveform = page.getByLabel('Audio waveform');
+  const cursor = waveform.locator('[part~="cursor"]');
+  const regionsContainer = waveform.locator('[part~="regions-container"]');
+  await expect(regionsContainer.locator('[data-lightscribe-region="selection"]')).toHaveCount(1);
+  await expect(cursor).toHaveCSS('width', '2px');
+  const [cursorZIndex, regionsZIndex] = await Promise.all([
+    cursor.evaluate((element) => Number(getComputedStyle(element).zIndex)),
+    regionsContainer.evaluate((element) => Number(getComputedStyle(element).zIndex))
+  ]);
+  expect(cursorZIndex).toBeGreaterThan(regionsZIndex);
   await page.getByRole('button', { name: 'Loop off' }).click();
   await expect(page.getByRole('button', { name: 'Loop on' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (
