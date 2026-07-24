@@ -4,7 +4,7 @@
 
 ## Summary
 
-Lightscribe will make saved waveform annotation regions directly discoverable without changing the existing single-click selection workflow. Hovering a passive saved region will show the same transient waveform preview used by saved-list row hover, and double-clicking that region will activate its annotation exactly as clicking its saved-list row does. Single-clicking a passive region will not change the active selection, draft, playback, or persisted project.
+ScribeLight will make saved waveform annotation regions directly discoverable without changing the existing single-click selection workflow. Hovering a passive saved region will show the same transient waveform preview used by saved-list row hover, and double-clicking that region will activate its annotation exactly as clicking its saved-list row does. Single-clicking a passive region will not change the active selection, draft, playback, or persisted project.
 
 The Selection inspector will stop duplicating annotation deletion. Its active-annotation action row will instead provide a way to begin a fresh annotation at the current loop boundaries. The existing Clear control will use a compact visible `X` while retaining an explicit accessible name.
 

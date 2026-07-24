@@ -1,6 +1,6 @@
-# Lightscribe
+# ScribeLight
 
-Lightscribe is a Windows desktop waveform looper and structured transcription annotator for MP3 and WAV clips up to 30 minutes long. Projects keep editable speaker and acoustic-tag labels in Lightscribe's application-data directory; the source audio remains untouched.
+ScribeLight is a Windows desktop waveform looper and structured transcription annotator for MP3 and WAV clips up to 30 minutes long. Projects keep editable speaker and acoustic-tag labels in ScribeLight's application-data directory; the source audio remains untouched.
 
 ## Prerequisites
 
@@ -19,9 +19,9 @@ bun tauri dev
 
 ## Desktop workspace
 
-Lightscribe opens at 1280x800 with a 1280px minimum width. Its dense desktop layout keeps the title and waveform logo in a compact toolbar, gives the waveform the full window width, and keeps the active transcription editor above a continuously scrollable Saved annotations list beside the Selection inspector without pagination. Saved ranges appear as faint interactive waveform annotations: hovering a saved row or hovering a saved waveform region previews it without mutation, while clicking a row or double-clicking activates it. Inspector Add can begin a fresh draft at the current loop range, while deletion from the Saved annotations list remains destructive. Settings owns project speaker and acoustic-tag labels, multiline TSV export policy, and appearance.
+ScribeLight opens at 1280x800 with a 1280px minimum width. Its dense desktop layout keeps the title and waveform logo in a compact toolbar, gives the waveform the full window width, and keeps the active transcription editor above a continuously scrollable Saved annotations list beside the Selection inspector without pagination. Saved ranges appear as faint interactive waveform annotations: hovering a saved row or hovering a saved waveform region previews it without mutation, while clicking a row or double-clicking activates it. Inspector Add can begin a fresh draft at the current loop range, while deletion from the Saved annotations list remains destructive. Settings owns project speaker and acoustic-tag labels, multiline TSV export policy, and appearance.
 
-The application-global palette is stored separately from project and TSV data. Ion Magenta is the default, with Arctic Steel, Ultraviolet Grid, and Crimson Scope also available. The remaining base workspace, palette, interaction, and accessibility contract is recorded in the [Lightscribe UI Rework Design](docs/superpowers/specs/2026-07-19-lightscribe-ui-rework-design.md). The [Transcription and Waveform QoL Design](docs/superpowers/specs/2026-07-21-transcription-waveform-qol-design.md) supersedes the editor, saved-annotation list, and waveform-interaction sections of that UI rework design. The [Waveform Region and Inspector QoL Design](docs/superpowers/specs/2026-07-22-waveform-region-inspector-qol-design.md) supersedes only the passive-region interaction and inspector-action requirements of that QoL design. The original [product specification](docs/superpowers/specs/2026-07-18-lightscribe-design.md) remains authoritative for audio, persistence, and interchange behavior.
+The application-global palette is stored separately from project and TSV data under `scribelight.palette`; when that key is absent, ScribeLight reads the legacy `lightscribe.palette` value for upgrade compatibility. Ion Magenta is the default. The available palettes are Ion Magenta, Neon Ember, Mercury Vapor, Argon Current, Xenon Arc, Krypton Glow, Sodium Vapor, and Oxygen Pearl. The remaining base workspace, palette, interaction, and accessibility contract is recorded in the [ScribeLight UI Rework Design](docs/superpowers/specs/2026-07-19-lightscribe-ui-rework-design.md). The [Transcription and Waveform QoL Design](docs/superpowers/specs/2026-07-21-transcription-waveform-qol-design.md) supersedes the editor, saved-annotation list, and waveform-interaction sections of that UI rework design. The [Waveform Region and Inspector QoL Design](docs/superpowers/specs/2026-07-22-waveform-region-inspector-qol-design.md) supersedes only the passive-region interaction and inspector-action requirements of that QoL design. The original [product specification](docs/superpowers/specs/2026-07-18-lightscribe-design.md) remains authoritative for audio, persistence, and interchange behavior.
 
 ## Verification
 
@@ -48,7 +48,7 @@ The standalone executable is written below `src-tauri/target/release/`, and Wind
 
 ## Portable TSV format
 
-Lightscribe imports and exports UTF-8 tab-separated files with this exact ten-column header:
+ScribeLight imports and exports UTF-8 tab-separated files with this exact ten-column header:
 
 ```text
 start_seconds	end_seconds	event_type	transcription	intelligibility	speaker	overlap	confidence	acoustic_tags	notes

@@ -35,7 +35,7 @@ describe('main entry point', () => {
     vi.resetModules();
   });
 
-  it('mounts the Lightscribe shell into the app target', async () => {
+  it('mounts the ScribeLight shell into the app target', async () => {
     document.body.innerHTML = '<div id="app"></div>';
     localStorage.setItem('lightscribe.palette', 'argon-current');
     expectedPalette = 'argon-current';
@@ -44,7 +44,7 @@ describe('main entry point', () => {
     const mountedApp = await app;
 
     expect(document.documentElement.dataset.palette).toBe('argon-current');
-    expect(screen.getByRole('heading', { name: 'Lightscribe' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ScribeLight' })).toBeInTheDocument();
     expect(mount).toHaveBeenCalledWith(App, {
       target: document.getElementById('app'),
       props: expect.objectContaining({ bridge: expect.any(Object), pickers: expect.any(Object) })

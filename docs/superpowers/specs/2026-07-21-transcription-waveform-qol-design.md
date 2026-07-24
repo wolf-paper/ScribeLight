@@ -2,9 +2,9 @@
 
 ## Summary
 
-Lightscribe will move transcription entry out of the Selection inspector and into a dedicated `ActiveTextEditor.svelte` panel above the continuous saved-annotation list. Saved annotations will also appear as faint, non-interactive regions on the waveform. Hovering or keyboard-focusing a saved row will emphasize its waveform region without changing application state, while clicking the row will activate that annotation in place of the current Edit button.
+ScribeLight will move transcription entry out of the Selection inspector and into a dedicated `ActiveTextEditor.svelte` panel above the continuous saved-annotation list. Saved annotations will also appear as faint, non-interactive regions on the waveform. Hovering or keyboard-focusing a saved row will emphasize its waveform region without changing application state, while clicking the row will activate that annotation in place of the current Edit button.
 
-All work will be performed in the primary checkout at `C:\Users\squnk\source\repos\wolf-paper\lightscribe`. The change is frontend-only and must preserve the Rust playback engine, 1 ms boundary model, loop behavior, TSV format, project persistence schema, palette selection, and 1280 px minimum-width layout.
+All work will be performed in the primary checkout at `C:\Users\squnk\source\repos\wolf-paper\ScribeLight`. The change is frontend-only and must preserve the Rust playback engine, 1 ms boundary model, loop behavior, TSV format, project persistence schema, palette selection, and 1280 px minimum-width layout.
 
 ## Goals
 

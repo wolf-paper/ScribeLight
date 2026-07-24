@@ -12,7 +12,8 @@ export const PALETTE_IDS = [
 export type PaletteId = typeof PALETTE_IDS[number];
 
 export const DEFAULT_PALETTE: PaletteId = 'ion-magenta';
-export const PALETTE_STORAGE_KEY = 'lightscribe.palette';
+export const PALETTE_STORAGE_KEY = 'scribelight.palette';
+const LEGACY_PALETTE_STORAGE_KEY = 'lightscribe.palette';
 
 type PaletteStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
@@ -30,7 +31,11 @@ export function normalizePalette(value: string | null): PaletteId {
 
 export function loadPalette(storage: Pick<Storage, 'getItem'> | null | undefined): PaletteId {
   try {
-    return normalizePalette(storage?.getItem(PALETTE_STORAGE_KEY) ?? null);
+    if (!storage) return DEFAULT_PALETTE;
+    const storedPalette = storage.getItem(PALETTE_STORAGE_KEY);
+    return normalizePalette(
+      storedPalette === null ? storage.getItem(LEGACY_PALETTE_STORAGE_KEY) : storedPalette
+    );
   } catch {
     return DEFAULT_PALETTE;
   }

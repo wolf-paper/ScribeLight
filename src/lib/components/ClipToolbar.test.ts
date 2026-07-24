@@ -17,8 +17,8 @@ describe('ClipToolbar', () => {
       filename: 'clip.wav', playing: false, loopEnabled: true, canLoop: true,
       format: 'seconds', volume: 1, analysisPercent: null, actions: handlers
     });
-    expect(screen.getByRole('img', { name: 'Lightscribe waveform logo' })).toBeInTheDocument();
-    expect(screen.getByText('Lightscribe')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'ScribeLight waveform logo' })).toBeInTheDocument();
+    expect(screen.getByText('ScribeLight')).toBeVisible();
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Loop on' }));

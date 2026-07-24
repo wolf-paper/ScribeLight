@@ -223,7 +223,7 @@ impl AudioEngine {
         let worker_state = Arc::clone(&render_state);
         let lookahead_frames = (capacity / 4).max(1);
         let worker = std::thread::Builder::new()
-            .name("lightscribe-audio-decoder".to_owned())
+            .name("scribelight-audio-decoder".to_owned())
             .spawn(move || {
                 run_worker(WorkerRequest {
                     source,

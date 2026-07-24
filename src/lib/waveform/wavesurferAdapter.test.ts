@@ -154,7 +154,7 @@ describe('createWaveformAdapter', () => {
     waveListeners.get('ready')?.();
     expect(regions.addRegion).toHaveBeenCalledOnce();
     expect(regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'lightscribe-canonical-selection',
+      id: 'scribelight-canonical-selection',
       start: 0.3,
       end: 0.4
     }));
@@ -302,9 +302,9 @@ describe('createWaveformAdapter', () => {
     adapter.setAnnotations([{ id: 'saved', startMs: 200, endMs: 400 }]);
     adapter.setPreviewAnnotation('saved');
     fixture.waveListeners.get('ready')?.();
-    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'selection')!;
-    const passive = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'annotation')!;
-    const preview = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'preview')!;
+    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'selection')!;
+    const passive = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'annotation')!;
+    const preview = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'preview')!;
 
     tokens['--color-waveform'] = '#aaaaaa';
     tokens['--color-waveform-active'] = '#bbbbbb';
@@ -348,17 +348,17 @@ describe('createWaveformAdapter', () => {
     expect(fixture.regions.addRegion).not.toHaveBeenCalled();
 
     fixture.waveListeners.get('ready')?.();
-    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'selection')!;
-    const passive = fixture.createdRegions.filter(({ element }) => element.dataset.lightscribeRegion === 'annotation');
+    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'selection')!;
+    const passive = fixture.createdRegions.filter(({ element }) => element.dataset.scribelightRegion === 'annotation');
     expect(passive).toHaveLength(2);
     expect(passive[0].options).toMatchObject({
-      id: 'lightscribe-annotation-a', start: .1, end: .3, drag: false, resize: false
+      id: 'scribelight-annotation-a', start: .1, end: .3, drag: false, resize: false
     });
     expect(passive[0].element.dataset.annotationId).toBe('a');
     expect(passive[0].element.style.pointerEvents).toBe('all');
     expect(passive[0].element.style.cursor).toBe('pointer');
     expect(passive[0].element.style.zIndex).toBe('1');
-    expect(canonical.element.dataset.lightscribeRegion).toBe('selection');
+    expect(canonical.element.dataset.scribelightRegion).toBe('selection');
     expect(canonical.element.style.zIndex).toBe('2');
 
     adapter.setAnnotations([
@@ -398,15 +398,15 @@ describe('createWaveformAdapter', () => {
     adapter.setPreviewAnnotation('a');
     fixture.waveListeners.get('ready')?.();
     const passive = fixture.createdRegions.filter(({ element }) =>
-      element.dataset.lightscribeRegion === 'annotation'
+      element.dataset.scribelightRegion === 'annotation'
     );
     const a = passive.find(({ element }) => element.dataset.annotationId === 'a')!;
     const b = passive.find(({ element }) => element.dataset.annotationId === 'b')!;
     const canonical = fixture.createdRegions.find(({ element }) =>
-      element.dataset.lightscribeRegion === 'selection'
+      element.dataset.scribelightRegion === 'selection'
     )!;
     const preview = fixture.createdRegions.find(({ element }) =>
-      element.dataset.lightscribeRegion === 'preview'
+      element.dataset.scribelightRegion === 'preview'
     )!;
 
     expect(a.options).toMatchObject({ drag: false, resize: false });
@@ -506,12 +506,12 @@ describe('createWaveformAdapter', () => {
       { id: 'c', startMs: 500, endMs: 700 }
     ]);
     fixture.waveListeners.get('ready')?.();
-    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'selection')!;
+    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'selection')!;
 
     adapter.setPreviewAnnotation('a');
-    const previewA = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'preview')!;
+    const previewA = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'preview')!;
     expect(previewA.options).toMatchObject({
-      id: 'lightscribe-annotation-preview', start: .1, end: .3, drag: false, resize: false
+      id: 'scribelight-annotation-preview', start: .1, end: .3, drag: false, resize: false
     });
     expect(previewA.element.dataset.annotationId).toBe('a');
     expect(previewA.element.style.pointerEvents).toBe('none');
@@ -525,7 +525,7 @@ describe('createWaveformAdapter', () => {
     expect(previewA.remove).not.toHaveBeenCalled();
 
     adapter.setPreviewAnnotation('c');
-    const previews = fixture.createdRegions.filter(({ element }) => element.dataset.lightscribeRegion === 'preview');
+    const previews = fixture.createdRegions.filter(({ element }) => element.dataset.scribelightRegion === 'preview');
     const previewC = previews.at(-1)!;
     expect(previews).toHaveLength(2);
     expect(previewA.remove).toHaveBeenCalledOnce();
@@ -553,9 +553,9 @@ describe('createWaveformAdapter', () => {
     adapter.setAnnotations([{ id: 'a', startMs: 300, endMs: 400 }]);
     adapter.setPreviewAnnotation('a');
     fixture.waveListeners.get('ready')?.();
-    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'selection')!;
-    const passive = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'annotation')!;
-    const preview = fixture.createdRegions.find(({ element }) => element.dataset.lightscribeRegion === 'preview')!;
+    const canonical = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'selection')!;
+    const passive = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'annotation')!;
+    const preview = fixture.createdRegions.find(({ element }) => element.dataset.scribelightRegion === 'preview')!;
 
     for (const managed of [passive, preview]) {
       fixture.regionListeners.get('region-initialized')?.(managed);

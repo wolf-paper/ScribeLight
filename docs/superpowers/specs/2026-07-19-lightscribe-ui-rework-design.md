@@ -1,8 +1,8 @@
-# Lightscribe UI Rework Design
+# ScribeLight UI Rework Design
 
 ## Summary
 
-Lightscribe will use a dense, review-oriented desktop workspace optimized for a 1280px minimum window width. The approved layout combines the annotation-list and right-inspector structure from mockup Option 2 with the title bar, waveform logo, toolbar, and waveform treatment from Option 1. The default visual theme is the original Ion Magenta hybrid, and Settings offers four complete palettes: Ion Magenta, Arctic Steel, Ultraviolet Grid, and Crimson Scope.
+ScribeLight will use a dense, review-oriented desktop workspace optimized for a 1280px minimum window width. The approved layout combines the annotation-list and right-inspector structure from mockup Option 2 with the title bar, waveform logo, toolbar, and waveform treatment from Option 1. Ion Magenta is the default visual theme, and Settings offers the eight current palettes: Ion Magenta, Neon Ember, Mercury Vapor, Argon Current, Xenon Arc, Krypton Glow, Sodium Vapor, and Oxygen Pearl.
 
 This rework is presentation and workflow work. The Rust playback engine, waveform analysis, millisecond loop boundaries, Ctrl+wheel zoom behavior, project recovery guarantees, and TSV safety rules remain unchanged except for the explicit intelligibility-token migration described below.
 
@@ -12,7 +12,7 @@ The Tauri window opens at 1280x800 and has a 1280px minimum width. Layout dimens
 
 The application is divided into three vertical bands:
 
-1. A compact application toolbar containing the Lightscribe waveform mark and title, Open Audio, the current filename, Play/Pause, Loop, volume, the time-format toggle, Import TSV, Export TSV, and Settings.
+1. A compact application toolbar containing the ScribeLight waveform mark and title, Open Audio, the current filename, Play/Pause, Loop, volume, the time-format toggle, Import TSV, Export TSV, and Settings.
 2. A full-width timeline with top ruler, loop-selection bar, waveform, bottom ruler, and a restrained `Ctrl + wheel to zoom` hint. The waveform occupies roughly one third of the usable window height and retains its existing horizontal-scroll and pointer-centered zoom behavior.
 3. A lower workspace using `minmax(0, 1.8fr) minmax(22rem, 1fr)`: Saved annotations on the left and Selection inspector on the right.
 
@@ -61,29 +61,13 @@ The toolbar Settings button opens a modal dialog. The dialog contains three sect
 
 This removes all speaker and acoustic-tag administration from the inspector. Existing stable-ID, uniqueness, reserved-label, reassignment, and confirmation rules remain unchanged.
 
-Palette selection applies immediately and persists as an application preference under the local-storage key `lightscribe.palette`. It is not written into an audio project or TSV. Missing, unavailable, or invalid stored values fall back to `ion-magenta`; storage failures must not prevent the application from running. The active palette is applied to the document root before normal interaction so dialogs, scrollbars, and the body use the same theme.
+Palette selection applies immediately and persists as an application preference under the local-storage key `scribelight.palette`. If that key is absent, ScribeLight reads `lightscribe.palette` only for upgrade compatibility; future writes use only `scribelight.palette`. Palette selection is not written into an audio project or TSV. Missing, unavailable, or invalid stored values fall back to `ion-magenta`; storage failures must not prevent the application from running. The active palette is applied to the document root before normal interaction so dialogs, scrollbars, and the body use the same theme.
 
 ## Palette System
 
 Components consume semantic CSS custom properties rather than palette literals. At minimum the system defines canvas, toolbar, panel, raised/input, border, primary text, secondary text, accent, waveform, active waveform, selection wash, loop boundary, playhead, focus, scrollbar track, and scrollbar thumb tokens.
 
-Ion Magenta is the default and uses the original hybrid values, including the fully saturated solid accent. The later muted-button experiment is not used.
-
-| Token | Ion Magenta | Arctic Steel | Ultraviolet Grid | Crimson Scope |
-|---|---:|---:|---:|---:|
-| Canvas | `#0B0C19` | `#0B1015` | `#11091B` | `#19090D` |
-| Toolbar | `#111326` | `#10171E` | `#170D25` | `#210C12` |
-| Panel | `#17182B` | `#16212B` | `#1E102E` | `#291017` |
-| Raised/input | `#22213A` | `#1C2A35` | `#2D1843` | `#3A1922` |
-| Border | `#403653` | `#344958` | `#56326F` | `#66303A` |
-| Primary text | `#F7F3FA` | `#F1F6F8` | `#F8F2FC` | `#FFF5F7` |
-| Secondary text | `#B8AFC5` | `#A8BAC4` | `#C1AACF` | `#D2ADB5` |
-| Accent | `#EF5BAD` | `#38BDF8` | `#B978F6` | `#FF647C` |
-| Waveform | `#71DCE8` | `#A5F3FC` | `#E2B2FF` | `#FFB0BC` |
-| Active waveform | `#A5F3FC` | `#D7FAFF` | `#F0D4FF` | `#FFD3DA` |
-| Selection wash | `#2B244A` | `#1B3C4E` | `#3A1E50` | `#4B1D28` |
-| Loop boundary | `#D96AEC` | `#38BDF8` | `#C98AFF` | `#FF7A8E` |
-| Playhead | `#FFB1DA` | `#E0F9FF` | `#F7D8FF` | `#FFE0E5` |
+Ion Magenta is the default and uses the original hybrid values, including the fully saturated solid accent. The current palette set is Ion Magenta, Neon Ember, Mercury Vapor, Argon Current, Xenon Arc, Krypton Glow, Sodium Vapor, and Oxygen Pearl. The later muted-button experiment is not used.
 
 Speaker colors use the shared ordered set `#58D7E8`, `#F0B36A`, `#9B9BFF`, `#64D7A5`, and `#F28BC0`. Acoustic tags use low-opacity cyan, violet, rose, amber, and mint fills. A stable ID-based color function ensures that a speaker or tag retains its color across rows, dropdowns, chips, renames, and sessions.
 

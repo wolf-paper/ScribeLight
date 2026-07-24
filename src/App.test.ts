@@ -73,7 +73,7 @@ describe('App', () => {
 
   it('identifies the product and empty state without touching a live Tauri window', () => {
     renderApp();
-    expect(screen.getByRole('heading', { name: 'Lightscribe' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'ScribeLight' })).toBeInTheDocument();
     expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
   });
 

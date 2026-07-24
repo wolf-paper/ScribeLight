@@ -8,9 +8,9 @@ async function openFixture(page: Page, story: string, reset = true): Promise<voi
   await page.goto(fixtureUrl(story, reset));
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__?: { marker: string };
+      __SCRIBELIGHT_TEST__?: { marker: string };
     }
-  ).__LIGHTSCRIBE_TEST__?.marker)).toBe('LIGHTSCRIBE_BROWSER_FAKE_V1');
+  ).__SCRIBELIGHT_TEST__?.marker)).toBe('SCRIBELIGHT_BROWSER_FAKE_V1');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Settings' })).toBeEnabled();
@@ -79,9 +79,9 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { snapshot: { positionMs: number } };
+      __SCRIBELIGHT_TEST__: { snapshot: { positionMs: number } };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.positionMs)).toBe(1_000);
+  ).__SCRIBELIGHT_TEST__.snapshot.positionMs)).toBe(1_000);
   await page.keyboard.press('o');
   await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
   await expect(page.getByLabel('End milliseconds')).toHaveValue('1000');
@@ -89,7 +89,7 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   const waveform = page.getByLabel('Audio waveform');
   const cursor = waveform.locator('[part~="cursor"]');
   const regionsContainer = waveform.locator('[part~="regions-container"]');
-  await expect(regionsContainer.locator('[data-lightscribe-region="selection"]')).toHaveCount(1);
+  await expect(regionsContainer.locator('[data-scribelight-region="selection"]')).toHaveCount(1);
   await expect(cursor).toHaveCSS('width', '2px');
   const [cursorZIndex, regionsZIndex] = await Promise.all([
     cursor.evaluate((element) => Number(getComputedStyle(element).zIndex)),
@@ -100,9 +100,9 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(page.getByRole('button', { name: 'Loop on' })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
+      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
     }
-  ).__LIGHTSCRIBE_TEST__.nativeCalls)).toContainEqual({
+  ).__SCRIBELIGHT_TEST__.nativeCalls)).toContainEqual({
     command: 'set_loop', selection: { startMs: 0, endMs: 1_000 }
   });
 
@@ -138,19 +138,19 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   if (!editorBounds || !listBounds) throw new Error('annotation workspace has no layout bounds');
   expect(editorBounds.y + editorBounds.height).toBeLessThanOrEqual(listBounds.y);
 
-  const passiveRegions = page.locator('[data-lightscribe-region="annotation"]');
-  const previewRegions = page.locator('[data-lightscribe-region="preview"]');
+  const passiveRegions = page.locator('[data-scribelight-region="annotation"]');
+  const previewRegions = page.locator('[data-scribelight-region="preview"]');
   await expect(passiveRegions).toHaveCount(2);
   await expect(previewRegions).toHaveCount(0);
   const firstRow = annotations.locator('.annotation-row').first();
   const stateBeforeHover = await page.evaluate(() => {
     const testState = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: {
+      __SCRIBELIGHT_TEST__: {
         saveProjectCalls: number;
         savedProject: Project | null;
         nativeCalls: Array<{ command: string }>;
       };
-    }).__LIGHTSCRIBE_TEST__;
+    }).__SCRIBELIGHT_TEST__;
     return {
       saveProjectCalls: testState.saveProjectCalls,
       project: testState.savedProject,
@@ -166,12 +166,12 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await page.waitForTimeout(400);
   const stateAfterHover = await page.evaluate(() => {
     const testState = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: {
+      __SCRIBELIGHT_TEST__: {
         saveProjectCalls: number;
         savedProject: Project | null;
         nativeCalls: Array<{ command: string }>;
       };
-    }).__LIGHTSCRIBE_TEST__;
+    }).__SCRIBELIGHT_TEST__;
     return {
       saveProjectCalls: testState.saveProjectCalls,
       project: testState.savedProject,
@@ -194,12 +194,12 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
 
   const stateBeforeWaveformHover = await page.evaluate(() => {
     const testState = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: {
+      __SCRIBELIGHT_TEST__: {
         saveProjectCalls: number;
         savedProject: Project | null;
         nativeCalls: Array<{ command: string }>;
       };
-    }).__LIGHTSCRIBE_TEST__;
+    }).__SCRIBELIGHT_TEST__;
     return {
       saveProjectCalls: testState.saveProjectCalls,
       project: structuredClone(testState.savedProject),
@@ -215,12 +215,12 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await page.waitForTimeout(400);
   const stateAfterWaveformHover = await page.evaluate(() => {
     const testState = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: {
+      __SCRIBELIGHT_TEST__: {
         saveProjectCalls: number;
         savedProject: Project | null;
         nativeCalls: Array<{ command: string }>;
       };
-    }).__LIGHTSCRIBE_TEST__;
+    }).__SCRIBELIGHT_TEST__;
     return {
       saveProjectCalls: testState.saveProjectCalls,
       project: structuredClone(testState.savedProject),
@@ -289,9 +289,9 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await page.getByLabel('End milliseconds').press('Tab');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
+  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
   const clearAnnotation = page.getByRole('button', { name: 'Clear annotation' });
   await expect(clearAnnotation).toHaveText('X');
   await clearAnnotation.click();
@@ -301,9 +301,9 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(page.getByRole('button', { name: 'Move loop selection' })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toBeNull();
+  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toBeNull();
   expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
     rows.map((row) => row.getAttribute('aria-current'))
   )).toEqual([null, null]);
@@ -318,8 +318,8 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   await expect(annotations.locator('.annotation-row')).toHaveCount(2);
   await expect.poll(() => page.evaluate(() => {
     const project = (globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { savedProject: Project | null };
-    }).__LIGHTSCRIBE_TEST__.savedProject;
+      __SCRIBELIGHT_TEST__: { savedProject: Project | null };
+    }).__SCRIBELIGHT_TEST__.savedProject;
     if (!project) return null;
     return {
       activeAnnotationId: project.activeAnnotationId,
@@ -360,51 +360,51 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
   const endBoundary = page.getByLabel('End milliseconds');
   const loopCallsBeforeEdit = await page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string }> };
+      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string }> };
     }
-  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length);
+  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length);
   await startBoundary.fill('');
   await startBoundary.pressSequentially('3000');
   await expect(startBoundary).toHaveValue('3000');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string }> };
+      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string }> };
     }
-  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
+  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
   await startBoundary.press('Tab');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toBeNull();
+  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toBeNull();
   await endBoundary.fill('');
   await endBoundary.pressSequentially('4000');
   await expect(endBoundary).toHaveValue('4000');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string }> };
+      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string }> };
     }
-  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
+  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
   await endBoundary.press('Tab');
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: {
+      __SCRIBELIGHT_TEST__: {
         snapshot: { loopRange: { startMs: number; endMs: number } | null };
         nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }>;
       };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toBeNull();
+  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toBeNull();
   await page.getByRole('button', { name: 'Loop off' }).click();
   await expect.poll(() => page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
+      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
     }
-  ).__LIGHTSCRIBE_TEST__.snapshot.loopRange)).toEqual({ startMs: 3_000, endMs: 4_000 });
+  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toEqual({ startMs: 3_000, endMs: 4_000 });
   const recordedLoops = await page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
+      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
     }
-  ).__LIGHTSCRIBE_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop'));
+  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop'));
   expect(recordedLoops.at(-1)).toEqual({
     command: 'set_loop', selection: { startMs: 3_000, endMs: 4_000 }
   });
@@ -459,10 +459,10 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
     .toContainText('Exported 3 annotations');
   const exported = await page.evaluate(() => (
     globalThis as typeof globalThis & {
-      __LIGHTSCRIBE_LAST_EXPORT__: { path: string; project: Project };
+      __SCRIBELIGHT_LAST_EXPORT__: { path: string; project: Project };
     }
-  ).__LIGHTSCRIBE_LAST_EXPORT__);
-  expect(exported.path).toBe('lightscribe-export.tsv');
+  ).__SCRIBELIGHT_LAST_EXPORT__);
+  expect(exported.path).toBe('scribelight-export.tsv');
 
   const project = exported.project;
   expect(project.annotations).toHaveLength(3);
@@ -514,8 +514,8 @@ test('recovers the saved project after a renderer reopen', async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openFixture(page, 'recovery');
   await page.getByRole('button', { name: 'Settings' }).click();
-  await page.getByRole('radio', { name: /Crimson Scope/ }).click();
-  await expect(page.locator('html')).toHaveAttribute('data-palette', 'crimson-scope');
+  await page.getByRole('combobox', { name: 'Palette' }).selectOption('krypton-glow');
+  await expect(page.locator('html')).toHaveAttribute('data-palette', 'krypton-glow');
   await page.getByRole('button', { name: 'Close settings' }).click();
   await page.getByLabel('Start milliseconds').fill('5000');
   await page.getByLabel('End milliseconds').fill('6000');
@@ -524,7 +524,7 @@ test('recovers the saved project after a renderer reopen', async ({ page }) => {
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');
 
   await page.goto(fixtureUrl('recovery'));
-  await expect(page.locator('html')).toHaveAttribute('data-palette', 'crimson-scope');
+  await expect(page.locator('html')).toHaveAttribute('data-palette', 'krypton-glow');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
   await expect(page.getByLabel('Saved annotations')).toContainText('再開');

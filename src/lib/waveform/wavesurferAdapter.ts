@@ -31,9 +31,9 @@ export type WaveformAdapterFactory = (
   handlers: WaveformInteractionHandlers
 ) => WaveformAdapter;
 
-const canonicalRegionId = 'lightscribe-canonical-selection';
-const annotationRegionId = (id: string): string => `lightscribe-annotation-${encodeURIComponent(id)}`;
-const previewRegionId = 'lightscribe-annotation-preview';
+const canonicalRegionId = 'scribelight-canonical-selection';
+const annotationRegionId = (id: string): string => `scribelight-annotation-${encodeURIComponent(id)}`;
+const previewRegionId = 'scribelight-annotation-preview';
 const passiveLayer = '1';
 const selectionLayer = '2';
 const previewLayer = '3';
@@ -125,7 +125,7 @@ export function createWaveformAdapter(
   const markSelection = (next: ReturnType<typeof regions.addRegion>): void => {
     const element = next.element;
     if (!element) return;
-    element.dataset.lightscribeRegion = 'selection';
+    element.dataset.scribelightRegion = 'selection';
     element.style.zIndex = selectionLayer;
   };
 
@@ -135,7 +135,7 @@ export function createWaveformAdapter(
   ): void => {
     const element = next.element;
     if (!element) return;
-    element.dataset.lightscribeRegion = 'annotation';
+    element.dataset.scribelightRegion = 'annotation';
     element.dataset.annotationId = annotationId;
     element.style.pointerEvents = 'all';
     element.style.cursor = 'pointer';
@@ -148,7 +148,7 @@ export function createWaveformAdapter(
   ): void => {
     const element = next.element;
     if (!element) return;
-    element.dataset.lightscribeRegion = 'preview';
+    element.dataset.scribelightRegion = 'preview';
     element.dataset.annotationId = annotationId;
     element.style.pointerEvents = 'none';
     element.style.zIndex = previewLayer;

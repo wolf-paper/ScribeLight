@@ -1,13 +1,13 @@
-# Lightscribe Design Specification
+# ScribeLight Design Specification
 
 **Date:** 2026-07-18  
 **Status:** Approved in conversation; pending written-spec review
 
-This document defines Lightscribe's audio, annotation, persistence, and interchange behavior. The approved desktop presentation and workflow are defined by the [Lightscribe UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md), which supersedes the original stacked workspace layout and legacy intelligibility vocabulary in this document.
+This document defines ScribeLight's audio, annotation, persistence, and interchange behavior. The approved desktop presentation and workflow are defined by the [ScribeLight UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md), which supersedes the original stacked workspace layout and legacy intelligibility vocabulary in this document.
 
 ## 1. Product Summary
 
-Lightscribe is a lightweight desktop audio player and annotation workspace for transcriptionists. It displays an MP3 or WAV waveform, lets the annotator create and repeatedly play precise loop selections, and associates each selection with structured transcript metadata. Projects persist locally and annotations export as UTF-8 TSV.
+ScribeLight is a lightweight desktop audio player and annotation workspace for transcriptionists. It displays an MP3 or WAV waveform, lets the annotator create and repeatedly play precise loop selections, and associates each selection with structured transcript metadata. Projects persist locally and annotations export as UTF-8 TSV.
 
 The first release targets audio clips up to 30 minutes. It supports mouse and keyboard operation, overlapping annotations, project-specific speakers and acoustic tags, millisecond time displays, and precise sample-counted looping.
 
@@ -71,7 +71,7 @@ WaveSurfer is a renderer and pointer-interaction surface. It is not the authorit
 
 5. **Settings dialog**
    - Owns application appearance, project speaker and acoustic-tag administration, and the project's multiline TSV export policy.
-   - Applies one of the four approved application-global palettes without storing the choice in project JSON or TSV.
+   - Applies one of the eight approved application-global palettes without storing the choice in project JSON or TSV.
 
 6. **Annotation list**
    - Lists committed events in chronological order in a continuously scrollable list with no pagination.
@@ -135,9 +135,9 @@ The native frame counter is authoritative. The Svelte playhead may interpolate b
 
 ## 7. Interface Design
 
-The interface follows the [Lightscribe UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md). The Tauri window opens at 1280x800 with a 1280px minimum width and no document-level horizontal overflow. A compact title/logo toolbar sits above the full-width waveform timeline; the lower workspace keeps the continuously scrollable Saved annotations list on the left and the Selection inspector on the right.
+The interface follows the [ScribeLight UI Rework Design](2026-07-19-lightscribe-ui-rework-design.md). The Tauri window opens at 1280x800 with a 1280px minimum width and no document-level horizontal overflow. A compact title/logo toolbar sits above the full-width waveform timeline; the lower workspace keeps the continuously scrollable Saved annotations list on the left and the Selection inspector on the right.
 
-Ion Magenta is the default palette. Settings also offers Arctic Steel, Ultraviolet Grid, and Crimson Scope. Palette selection applies across the application, persists under `lightscribe.palette`, and remains independent of project JSON and TSV data.
+Ion Magenta is the default palette. Settings also offers Neon Ember, Mercury Vapor, Argon Current, Xenon Arc, Krypton Glow, Sodium Vapor, and Oxygen Pearl. Palette selection applies across the application, persists under `scribelight.palette`, reads `lightscribe.palette` only when the new key is absent, and remains independent of project JSON and TSV data.
 
 ### 7.1 Clip toolbar
 
@@ -211,7 +211,7 @@ The Selection inspector shows the exact selection start and end, then provides:
 
 Defaults are optimized for speech annotation while remaining portable.
 
-Speaker and acoustic-tag management, palette selection, and the multiline TSV export policy are owned by Settings rather than the selection inspector. The complete inspector, Settings, list, and accessibility contracts are specified in the [UI rework design](2026-07-19-lightscribe-ui-rework-design.md).
+Speaker and acoustic-tag management, palette selection, and the multiline TSV export policy are owned by Settings rather than the selection inspector. The complete inspector, Settings, list, and accessibility contracts are specified in the [ScribeLight UI rework design](2026-07-19-lightscribe-ui-rework-design.md).
 
 ## 8. Annotation and Project Model
 
@@ -270,7 +270,7 @@ Initial intelligibility values:
 - `unintelligible`
 - `not_applicable`
 
-Legacy project and TSV values of `intelligible` are accepted and normalized to `highly_intelligible`; subsequent saves and exports use only the canonical value. See [Intelligibility Values in the UI rework design](2026-07-19-lightscribe-ui-rework-design.md#intelligibility-values).
+Legacy project and TSV values of `intelligible` are accepted and normalized to `highly_intelligible`; subsequent saves and exports use only the canonical value. See [Intelligibility Values in the ScribeLight UI rework design](2026-07-19-lightscribe-ui-rework-design.md#intelligibility-values).
 
 Overlap values:
 
@@ -326,7 +326,7 @@ incomplete_word
 ## 9. Annotation Workflow
 
 1. The user opens an MP3 or WAV file.
-2. Lightscribe restores the matching project and peak cache, if present.
+2. ScribeLight restores the matching project and peak cache, if present.
 3. Otherwise, peak generation begins in the background and reports progress.
 4. The user listens through the native engine and creates a selection with the mouse or keyboard.
 5. The selection bar, waveform region, rulers, and inspector times update together.
@@ -340,12 +340,12 @@ Draft fields and the active selection are saved with a short debounce for crash 
 
 ## 10. Persistence and File Handling
 
-- Project and draft data live in the platform-specific Lightscribe application-data directory.
+- Project and draft data live in the platform-specific ScribeLight application-data directory.
 - Waveform peaks live in a separate cache and may be regenerated safely.
 - No database is required for the first release.
 - The original audio is never modified or copied.
-- Lightscribe never automatically opens or edits adjacent JSON files.
-- Lightscribe does not scan for alternate annotator worksheets. TSV import is always an explicit user action.
+- ScribeLight never automatically opens or edits adjacent JSON files.
+- ScribeLight does not scan for alternate annotator worksheets. TSV import is always an explicit user action.
 - Project writes use a temporary file, flush, and atomic replacement where supported.
 - A failed save leaves the last valid project record intact and keeps the unsaved state in memory.
 - A changed source audio file invalidates its peak cache and requires confirmation before continuing with its existing annotations.

@@ -36,5 +36,5 @@ pub fn run() {
             commands::audio_close
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Lightscribe");
+        .expect("error while running ScribeLight");
 }

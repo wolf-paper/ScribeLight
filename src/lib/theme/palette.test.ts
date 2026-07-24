@@ -32,6 +32,25 @@ describe('palette preferences', () => {
     expect(loadPalette({ getItem: () => { throw new Error('denied'); } })).toBe('ion-magenta');
   });
 
+  it('loads the legacy palette only when the ScribeLight preference is absent', () => {
+    const storage = {
+      getItem: vi.fn((key: string) => key === PALETTE_STORAGE_KEY ? null : 'argon-current')
+    };
+
+    expect(loadPalette(storage)).toBe('argon-current');
+    expect(storage.getItem).toHaveBeenNthCalledWith(1, PALETTE_STORAGE_KEY);
+    expect(storage.getItem).toHaveBeenNthCalledWith(2, 'lightscribe.palette');
+  });
+
+  it('prefers the ScribeLight palette over a legacy preference', () => {
+    const storage = {
+      getItem: vi.fn((key: string) => key === PALETTE_STORAGE_KEY ? 'sodium-vapor' : 'argon-current')
+    };
+
+    expect(loadPalette(storage)).toBe('sodium-vapor');
+    expect(storage.getItem).toHaveBeenCalledTimes(1);
+  });
+
   it('applies a persisted palette when writing storage fails', () => {
     const storage = { setItem: vi.fn(() => { throw new Error('denied'); }) };
     const root = document.documentElement;

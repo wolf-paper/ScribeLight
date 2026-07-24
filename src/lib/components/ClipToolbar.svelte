@@ -35,10 +35,10 @@
 <header class="clip-toolbar">
   <div class="toolbar-main">
     <div class="product-mark">
-      <svg role="img" aria-label="Lightscribe waveform logo" viewBox="0 0 32 24">
+      <svg role="img" aria-label="ScribeLight waveform logo" viewBox="0 0 32 24">
         <path d="M1 12h4l2-7 4 14 4-17 4 20 4-14 3 7h5" />
       </svg>
-      <span class="toolbar-title">Lightscribe</span>
+      <span class="toolbar-title">ScribeLight</span>
     </div>
     <button type="button" onclick={actions.open}>Open audio</button>
     <span class="filename" title={filename ?? undefined}>{filename ?? 'No clip open'}</span>

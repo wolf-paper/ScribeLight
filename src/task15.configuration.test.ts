@@ -21,7 +21,7 @@ describe('Task 15 release configuration', () => {
     expect(entry).toContain("import('./test/browserFakeBridge').then");
 
     const fake = readFileSync('src/test/browserFakeBridge.ts', 'utf8');
-    expect(fake).toContain('__LIGHTSCRIBE_LAST_EXPORT__');
+    expect(fake).toContain('__SCRIBELIGHT_LAST_EXPORT__');
     expect(fake).not.toMatch(/portableTsv|encodeMultiline|lastTsv/);
   });
 

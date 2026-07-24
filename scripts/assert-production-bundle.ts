@@ -2,9 +2,9 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const forbidden = [
-  'LIGHTSCRIBE_BROWSER_FAKE_V1',
-  '__LIGHTSCRIBE_TEST__',
-  '__LIGHTSCRIBE_LAST_EXPORT__',
+  'SCRIBELIGHT_BROWSER_FAKE_V1',
+  '__SCRIBELIGHT_TEST__',
+  '__SCRIBELIGHT_LAST_EXPORT__',
   '@tauri-apps/plugin-opener',
   'tauri-plugin-opener',
   'annotation-audio-test.wav',

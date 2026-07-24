@@ -1,4 +1,4 @@
-use lightscribe_lib::{
+use scribelight_lib::{
     audio::{
         decoder::AudioDecoder,
         engine::ring_capacity_frames,
@@ -33,7 +33,7 @@ fn source_digest(path: &Path) -> (u64, blake3::Hash) {
     (bytes.len() as u64, blake3::hash(&bytes))
 }
 
-fn reopen_peak_data(source: &Path, cache_dir: &Path) -> lightscribe_lib::model::PeakData {
+fn reopen_peak_data(source: &Path, cache_dir: &Path) -> scribelight_lib::model::PeakData {
     let identity = AudioDecoder::open(source)
         .expect("inspect source while reopening")
         .identity()
@@ -261,11 +261,11 @@ fn corrupt_truncated_and_invalid_peak_caches_regenerate_when_audio_reopens() {
     let cache_file = cache_path(&cache_dir, &identity);
     std::fs::create_dir_all(&cache_dir).expect("create cache directory");
 
-    let invalid_shape = lightscribe_lib::model::PeakData {
+    let invalid_shape = scribelight_lib::model::PeakData {
         duration_ms: identity.duration_ms + 1,
         ..expected.clone()
     };
-    let coherently_truncated = lightscribe_lib::model::PeakData {
+    let coherently_truncated = scribelight_lib::model::PeakData {
         total_frames: 1,
         duration_ms: identity.duration_ms,
         sample_rate: identity.sample_rate,
@@ -290,7 +290,7 @@ fn corrupt_truncated_and_invalid_peak_caches_regenerate_when_audio_reopens() {
             read_cache(&cache_dir, &identity).expect("read regenerated cache"),
             Some(expected.clone())
         );
-        let persisted: lightscribe_lib::model::PeakData = serde_json::from_slice(
+        let persisted: scribelight_lib::model::PeakData = serde_json::from_slice(
             &std::fs::read(&cache_file).expect("read regenerated cache bytes"),
         )
         .expect("regenerated cache contains valid JSON");
@@ -436,7 +436,7 @@ fn production_tsv_export_rejects_a_hard_link_alias_to_the_source_audio() {
 
     assert!(matches!(
         error,
-        lightscribe_lib::error::AppError::Tsv(message) if message.contains("source audio")
+        scribelight_lib::error::AppError::Tsv(message) if message.contains("source audio")
     ));
     assert_eq!(std::fs::read(&source).unwrap(), original_bytes);
     assert_eq!(std::fs::read(&destination).unwrap(), original_bytes);

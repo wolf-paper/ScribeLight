@@ -6,7 +6,7 @@ import type {
 } from '../lib/bridge/native';
 import type { Project } from '../lib/domain/types';
 
-const marker = 'LIGHTSCRIBE_BROWSER_FAKE_V1';
+const marker = 'SCRIBELIGHT_BROWSER_FAKE_V1';
 const identity = {
   canonicalPath: 'annotation-audio-test.wav',
   size: 960_044,
@@ -90,7 +90,7 @@ const freshState = (): BrowserFakeState => ({
 
 function storageKey(): string {
   const story = new URLSearchParams(location.search).get('case') ?? 'default';
-  return `lightscribe:e2e:${story}`;
+  return `scribelight:e2e:${story}`;
 }
 
 function readState(key: string): BrowserFakeState {
@@ -119,11 +119,11 @@ export function browserTestProps() {
   const key = storageKey();
   let state = readState(key);
   const browserGlobal = globalThis as typeof globalThis & {
-    __LIGHTSCRIBE_LAST_EXPORT__: BrowserExportRecord | null;
+    __SCRIBELIGHT_LAST_EXPORT__: BrowserExportRecord | null;
   };
   const nativeCalls: NativeCall[] = [];
   let saveProjectCalls = 0;
-  browserGlobal.__LIGHTSCRIBE_LAST_EXPORT__ = null;
+  browserGlobal.__SCRIBELIGHT_LAST_EXPORT__ = null;
   const persist = () => sessionStorage.setItem(key, JSON.stringify(state));
   const updateSnapshot = (patch: Partial<PlaybackSnapshot>) => {
     state = { ...state, snapshot: { ...state.snapshot, ...patch } };
@@ -142,7 +142,7 @@ export function browserTestProps() {
         : null,
     readTsv: async () => structuredClone(importedFixture),
     writeTsv: async (path, project) => {
-      browserGlobal.__LIGHTSCRIBE_LAST_EXPORT__ = {
+      browserGlobal.__SCRIBELIGHT_LAST_EXPORT__ = {
         path,
         project: structuredClone(project)
       };
@@ -178,7 +178,7 @@ export function browserTestProps() {
     get snapshot() { return structuredClone(state.snapshot); },
     get nativeCalls() { return structuredClone(nativeCalls); }
   };
-  (globalThis as typeof globalThis & { __LIGHTSCRIBE_TEST__: typeof testApi }).__LIGHTSCRIBE_TEST__ = testApi;
+  (globalThis as typeof globalThis & { __SCRIBELIGHT_TEST__: typeof testApi }).__SCRIBELIGHT_TEST__ = testApi;
 
   return {
     bridge,
@@ -189,7 +189,7 @@ export function browserTestProps() {
     pickers: {
       audio: async () => new URLSearchParams(location.search).get('fixture'),
       tsv: async () => 'pass-a.annotation.private.tsv',
-      exportTsv: async () => 'lightscribe-export.tsv'
+      exportTsv: async () => 'scribelight-export.tsv'
     },
     id: () => {
       state = { ...state, nextId: state.nextId + 1 };

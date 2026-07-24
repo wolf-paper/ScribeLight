@@ -808,10 +808,10 @@
   };
 </script>
 
-<svelte:head><title>Lightscribe</title></svelte:head>
+<svelte:head><title>ScribeLight</title></svelte:head>
 
 <main class="app-shell">
-  <h1 class="product-title">Lightscribe</h1>
+  <h1 class="product-title">ScribeLight</h1>
   <ClipToolbar
     {filename}
     playing={playback.state === 'playing'}
