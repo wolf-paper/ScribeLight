@@ -1354,6 +1354,45 @@ describe('App', () => {
     expect(bridge.audioPlay).not.toHaveBeenCalled();
   });
 
+  it('does not play replacement audio when its transition starts after selection startup is accepted', async () => {
+    const bridge = makeFakeBridge();
+    bridge.inspectAudio.mockImplementation(async (path) => fakeIdentity(path));
+    const replacementAnalysis = deferred<PeakData>();
+    bridge.analyzeAudio.mockImplementation((path) => (
+      path === 'new.wav' ? replacementAnalysis.promise : Promise.resolve(fakePeaks())
+    ));
+    const pendingSeek = deferred<void>();
+    const paths = ['old.wav', 'new.wav'];
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
+    await openClip();
+    waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
+    bridge.audioSeek.mockImplementationOnce(async (milliseconds) => {
+      await pendingSeek.promise;
+      bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
+    });
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
+    await waitFor(() => expect(bridge.analyzeAudio).toHaveBeenCalledWith('new.wav'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenCalledWith(250));
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+
+    replacementAnalysis.resolve(fakePeaks());
+    await waitFor(() => expect(screen.getByText('new.wav')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Play' })).toBeEnabled());
+    expect(bridge.currentNativePath).toBe('new.wav');
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+
+    pendingSeek.resolve();
+    await waitFor(() => expect(bridge.snapshot.positionMs).toBe(250));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(bridge.currentNativePath).toBe('new.wav');
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+  });
+
   it('ignores a Space playback input while toolbar selection startup is pending', async () => {
     const bridge = makeFakeBridge();
     const pendingSeek = deferred<void>();

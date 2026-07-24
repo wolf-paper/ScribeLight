@@ -79,6 +79,7 @@
   let activeAnalysisGeneration: number | null = null;
   let audioOpenQueue: Promise<void> = Promise.resolve();
   let transitionOwner: number | null = null;
+  let nativeTransitionEpoch = 0;
   let transitionBusy = $state(false);
   let tablePreviewAnnotationId = $state<string | null>(null);
   let waveformPreviewAnnotationId = $state<string | null>(null);
@@ -228,6 +229,7 @@
   }
 
   function beginTransition(owner: number): void {
+    nativeTransitionEpoch += 1;
     transitionOwner = owner;
     transitionBusy = true;
     projectStore.setMutationsBlocked(true);
@@ -665,13 +667,15 @@
   function startPlayback(): Promise<void> {
     if (playbackStart) return playbackStart;
     const generation = operationGeneration;
+    const transitionEpoch = nativeTransitionEpoch;
     const activeSelection = get(projectStore).project?.activeSelection;
     const selection = activeSelection ? { ...activeSelection } : null;
     let request: Promise<void>;
     request = (async () => {
       if (selection) await audioSession.seek(selection.startMs);
       const state = get(audioSession).state;
-      if (!isCurrent(generation) || transitionBusy || closePromise
+      if (!isCurrent(generation) || transitionEpoch !== nativeTransitionEpoch
+        || transitionBusy || closePromise
         || (state !== 'paused' && state !== 'playing')) return;
       await audioSession.play();
     })().finally(() => {
