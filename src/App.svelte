@@ -661,9 +661,15 @@
     });
   }
 
+  async function startPlayback(): Promise<void> {
+    const selection = get(projectStore).project?.activeSelection;
+    if (selection) await audioSession.seek(selection.startMs);
+    await audioSession.play();
+  }
+
   function togglePlay(): void {
     if (transitionBusy || closePromise) return;
-    void reportPromise(playback.state === 'playing' ? audioSession.pause() : audioSession.play());
+    void reportPromise(playback.state === 'playing' ? audioSession.pause() : startPlayback());
   }
 
   function toggleLoop(): void {
@@ -690,7 +696,7 @@
     const snapshot = get(audioSession);
     if (event.code === 'Space') {
       event.preventDefault();
-      void reportPromise(snapshot.state === 'playing' ? audioSession.pause() : audioSession.play());
+      togglePlay();
       return;
     }
     if (event.key.toLowerCase() === 'i' && current.audioIdentity.durationMs > 0) {

@@ -1287,6 +1287,104 @@ describe('App', () => {
     expect(bridge.audioClose).toHaveBeenCalledTimes(1);
   });
 
+  it('restarts an active selection before toolbar playback and never seeks while pausing', async () => {
+    const bridge = makeFakeBridge();
+    const nativeOrder: string[] = [];
+    bridge.audioSeek.mockImplementation(async (milliseconds) => {
+      nativeOrder.push(`seek:${milliseconds}`);
+      bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
+    });
+    bridge.audioPlay.mockImplementation(async () => {
+      nativeOrder.push('play');
+      bridge.snapshot = { ...bridge.snapshot, state: 'playing' };
+    });
+    bridge.audioPause.mockImplementation(async () => {
+      nativeOrder.push('pause');
+      bridge.snapshot = { ...bridge.snapshot, state: 'paused' };
+    });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+    bridge.audioPause.mockClear();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(nativeOrder).toEqual(['seek:250', 'play']));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await waitFor(() => expect(nativeOrder).toEqual(['seek:250', 'play', 'pause']));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await waitFor(() => expect(nativeOrder).toEqual([
+      'seek:250', 'play', 'pause', 'seek:250', 'play'
+    ]));
+  });
+
+  it('restarts an active selection before playback from the Space shortcut', async () => {
+    const bridge = makeFakeBridge();
+    const pendingSeek = deferred<void>();
+    const nativeOrder: string[] = [];
+    bridge.audioSeek.mockImplementation(async (milliseconds) => {
+      nativeOrder.push(`seek:${milliseconds}`);
+      await pendingSeek.promise;
+      bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
+    });
+    bridge.audioPlay.mockImplementation(async () => {
+      nativeOrder.push('play');
+      bridge.snapshot = { ...bridge.snapshot, state: 'playing' };
+    });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    waveformInteractions.latest?.onSelectionChange({ startMs: 300, endMs: 700 });
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300));
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+
+    const space = new KeyboardEvent('keydown', {
+      code: 'Space', key: ' ', bubbles: true, cancelable: true
+    });
+    window.dispatchEvent(space);
+
+    await waitFor(() => expect(nativeOrder).toEqual(['seek:300']));
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+    expect(space.defaultPrevented).toBe(true);
+
+    pendingSeek.resolve();
+    await waitFor(() => expect(nativeOrder).toEqual(['seek:300', 'play']));
+  });
+
+  it('plays from the current native position when no selection is active', async () => {
+    const bridge = makeFakeBridge();
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+
+    await waitFor(() => expect(bridge.audioPlay).toHaveBeenCalledTimes(1));
+    expect(bridge.audioSeek).not.toHaveBeenCalled();
+  });
+
+  it('does not play when seeking to the active selection fails', async () => {
+    const bridge = makeFakeBridge();
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+    waveformInteractions.latest?.onSelectionChange({ startMs: 400, endMs: 800 });
+    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(400));
+    bridge.audioSeek.mockClear();
+    bridge.audioPlay.mockClear();
+    bridge.audioSeek.mockRejectedValueOnce(new Error('seek failed'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+
+    expect(await screen.findByRole('alert', { name: 'Application error' }))
+      .toHaveTextContent('seek failed');
+    expect(bridge.audioPlay).not.toHaveBeenCalled();
+  });
+
   it('handles global shortcuts but ignores text controls and IME composition', async () => {
     const bridge = makeFakeBridge();
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });

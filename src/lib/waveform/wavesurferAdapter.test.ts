@@ -219,6 +219,7 @@ describe('createWaveformAdapter', () => {
     const options = fixture.factoryOptions as Record<string, unknown>;
 
     expect(options.interact).toBe(false);
+    expect(options.cursorWidth).toBe(2);
     expect(options).not.toHaveProperty('media');
     adapter.setPlayhead(275);
     adapter.setZoom(250);
