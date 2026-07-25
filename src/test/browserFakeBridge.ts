@@ -7,7 +7,7 @@ import type {
 import type { Project } from '../lib/domain/types';
 
 const marker = 'SCRIBELIGHT_BROWSER_FAKE_V1';
-const identity = {
+const baseIdentity = {
   canonicalPath: 'annotation-audio-test.wav',
   size: 960_044,
   modifiedMs: 1,
@@ -93,6 +93,14 @@ function storageKey(): string {
   return `scribelight:e2e:${story}`;
 }
 
+function fixtureIdentity() {
+  const story = new URLSearchParams(location.search).get('case');
+  return {
+    ...baseIdentity,
+    durationMs: story === 'waveform-zoom-rendering' ? 30_000 : baseIdentity.durationMs
+  };
+}
+
 function readState(key: string): BrowserFakeState {
   if (new URLSearchParams(location.search).get('reset') === '1') sessionStorage.removeItem(key);
   const stored = sessionStorage.getItem(key);
@@ -105,18 +113,19 @@ function readState(key: string): BrowserFakeState {
   }
 }
 
-function fixedPeaks(): PeakData {
+function fixedPeaks(durationMs: number): PeakData {
   return {
-    totalFrames: 480_000,
-    durationMs: 10_000,
+    totalFrames: durationMs * 48,
+    durationMs,
     sampleRate: 48_000,
     framesPerPeak: 480,
-    channels: [Array.from({ length: 2_000 }, (_, index) => index % 2 === 0 ? -0.1 : 0.1)]
+    channels: [Array.from({ length: durationMs / 5 }, (_, index) => index % 2 === 0 ? -0.1 : 0.1)]
   };
 }
 
 export function browserTestProps() {
   const key = storageKey();
+  const identity = fixtureIdentity();
   let state = readState(key);
   const browserGlobal = globalThis as typeof globalThis & {
     __SCRIBELIGHT_LAST_EXPORT__: BrowserExportRecord | null;
@@ -148,7 +157,7 @@ export function browserTestProps() {
       };
     },
     inspectAudio: async () => ({ ...identity }),
-    analyzeAudio: async () => fixedPeaks(),
+    analyzeAudio: async () => fixedPeaks(identity.durationMs),
     cancelAnalysis: async () => undefined,
     onAnalysisProgress: async () => () => undefined,
     audioOpen: async () => {

@@ -213,22 +213,29 @@ describe('createWaveformAdapter', () => {
     adapter.destroy();
   });
 
-  it('keeps WaveSurfer renderer-only and applies pending playhead and zoom after ready', () => {
+  it('keeps WaveSurfer renderer-only and redraws against the externally zoomed parent after ready', () => {
     const fixture = createDouble();
     const adapter = createWaveformAdapter(document.createElement('div'), peaks, createHandlers(), fixture.factory);
     const options = fixture.factoryOptions as Record<string, unknown>;
 
     expect(options.interact).toBe(false);
     expect(options.cursorWidth).toBe(2);
+    expect(options.fillParent).toBe(true);
+    expect(options.minPxPerSec).toBe(0);
     expect(options).not.toHaveProperty('media');
     adapter.setPlayhead(275);
     adapter.setZoom(250);
     expect(fixture.renderer.renderProgress).not.toHaveBeenCalled();
+    expect(fixture.wave.setOptions).not.toHaveBeenCalled();
     expect(fixture.wave.zoom).not.toHaveBeenCalled();
 
     fixture.waveListeners.get('ready')?.();
     expect(fixture.renderer.renderProgress).toHaveBeenCalledWith(0.275, false);
-    expect(fixture.wave.zoom).toHaveBeenCalledWith(250);
+    expect(fixture.wave.setOptions).toHaveBeenCalledOnce();
+    expect(fixture.wave.setOptions).toHaveBeenCalledWith({ fillParent: true, minPxPerSec: 0 });
+    expect(fixture.wave.zoom).not.toHaveBeenCalled();
+    adapter.setZoom(250);
+    expect(fixture.wave.setOptions).toHaveBeenCalledOnce();
     adapter.setPlayhead(2_000);
     expect(fixture.renderer.renderProgress).toHaveBeenLastCalledWith(1, false);
 
@@ -241,14 +248,16 @@ describe('createWaveformAdapter', () => {
     const options = fixture.factoryOptions as Record<string, unknown>;
 
     expect(options.duration).toBe(0.2);
-    expect(options.fillParent).toBe(false);
+    expect(options.fillParent).toBe(true);
+    expect(options.minPxPerSec).toBe(0);
 
     adapter.setSelection({ startMs: 50, endMs: 200 });
     adapter.setPlayhead(200);
     adapter.setZoom(1_000);
     fixture.waveListeners.get('ready')?.();
 
-    expect(fixture.wave.zoom).toHaveBeenCalledWith(1_000);
+    expect(fixture.wave.setOptions).toHaveBeenCalledWith({ fillParent: true, minPxPerSec: 0 });
+    expect(fixture.wave.zoom).not.toHaveBeenCalled();
     expect(fixture.regions.addRegion).toHaveBeenCalledWith(expect.objectContaining({ start: 0.05, end: 0.2 }));
     expect(fixture.renderer.renderProgress).toHaveBeenCalledWith(1, false);
 

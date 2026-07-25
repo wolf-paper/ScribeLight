@@ -41,6 +41,58 @@ async function timelineMetrics(page: Page, pointerX: number) {
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
+test('keeps the visible waveform painted after zooming and scrolling past the first canvas tiles', async ({ page }) => {
+  await openFixture(page, 'waveform-zoom-rendering');
+  const viewport = page.getByTestId('timeline-viewport');
+  const bounds = await viewport.boundingBox();
+  if (!bounds) throw new Error('timeline viewport has no layout bounds');
+
+  for (let index = 0; index < 20; index += 1) {
+    const width = await viewport.locator('[data-testid="timeline-content"]').evaluate(
+      (content) => content.getBoundingClientRect().width
+    );
+    if (width > 17_000) break;
+    await viewport.dispatchEvent('wheel', {
+      ctrlKey: true,
+      deltaY: -100,
+      clientX: bounds.x + bounds.width / 2
+    });
+  }
+
+  await expect.poll(() => viewport.locator('[data-testid="timeline-content"]').evaluate(
+    (content) => content.getBoundingClientRect().width
+  )).toBeGreaterThan(17_000);
+  await viewport.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth - element.clientWidth;
+  });
+
+  await expect.poll(() => page.getByLabel('Audio waveform').evaluate((waveform) => {
+    const viewport = waveform.closest<HTMLElement>('[data-testid="timeline-viewport"]');
+    const renderer = waveform.firstElementChild?.shadowRoot;
+    if (!viewport || !renderer) return 0;
+    const viewportBounds = viewport.getBoundingClientRect();
+    const waveformBounds = waveform.getBoundingClientRect();
+    const visibleLeft = Math.max(viewportBounds.left, waveformBounds.left);
+    const visibleRight = Math.min(viewportBounds.right, waveformBounds.right);
+    const intervals = Array.from(renderer.querySelectorAll<HTMLCanvasElement>('.canvases canvas'))
+      .map((canvas) => canvas.getBoundingClientRect())
+      .map(({ left, right }) => ({
+        left: Math.max(left, visibleLeft),
+        right: Math.min(right, visibleRight)
+      }))
+      .filter(({ left, right }) => right > left)
+      .sort((a, b) => a.left - b.left);
+    let coveredWidth = 0;
+    let coveredThrough = visibleLeft;
+    for (const interval of intervals) {
+      if (interval.left > coveredThrough) break;
+      coveredWidth += Math.max(0, interval.right - Math.max(interval.left, coveredThrough));
+      coveredThrough = Math.max(coveredThrough, interval.right);
+    }
+    return coveredWidth / (visibleRight - visibleLeft);
+  }), { timeout: 2_000 }).toBeGreaterThan(0.99);
+});
+
 test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 export story', async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openFixture(page, 'complete-story');

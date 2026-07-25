@@ -99,7 +99,8 @@ export function createWaveformAdapter(
     cursorColor: initialPalette.cursor,
     cursorWidth: 2,
     normalize: true,
-    fillParent: false
+    fillParent: true,
+    minPxPerSec: 0
   });
   const regions = wave.registerPlugin(Regions.create());
   let region: ReturnType<typeof regions.addRegion> | null = null;
@@ -112,6 +113,7 @@ export function createWaveformAdapter(
   let previewAnnotationId: string | null = null;
   let desiredPlayheadMs = 0;
   let desiredZoom: number | null = null;
+  let appliedZoom: number | null = null;
   let ready = false;
   let syncing = false;
   let destroyed = false;
@@ -315,12 +317,9 @@ export function createWaveformAdapter(
   };
 
   const applyZoom = (): void => {
-    if (!ready || destroyed || desiredZoom === null) return;
-    try {
-      wave.zoom(desiredZoom);
-    } catch {
-      // WaveSurfer rejects zoom before its decoded peaks are available.
-    }
+    if (!ready || destroyed || desiredZoom === null || desiredZoom === appliedZoom) return;
+    appliedZoom = desiredZoom;
+    wave.setOptions({ fillParent: true, minPxPerSec: 0 });
   };
 
   const reportUserSelection = (next: typeof region): void => {
