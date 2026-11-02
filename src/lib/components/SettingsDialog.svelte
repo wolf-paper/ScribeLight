@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { MultilinePolicy } from '../domain/types';
   import type { ProjectState, ProjectStore } from '../state/projectStore';
   import type { PaletteId } from '../theme/palette';
   import AcousticTagManager from './AcousticTagManager.svelte';
@@ -10,14 +9,12 @@
   interface Props {
     store: ProjectStore | null;
     palette: PaletteId;
-    multilinePolicy: MultilinePolicy;
     disabled?: boolean;
     onpalette(value: PaletteId): void;
-    onpolicy(value: MultilinePolicy): void;
     onclose(): void;
   }
 
-  let { store, palette, multilinePolicy, disabled = false, onpalette, onpolicy, onclose }: Props = $props();
+  let { store, palette, disabled = false, onpalette, onclose }: Props = $props();
   let dialog: HTMLDialogElement;
   let closeButton: HTMLButtonElement;
   let projectState: ProjectState | null = $state(null);
@@ -59,11 +56,6 @@
     const target = event.target;
     if (dialog?.open && target instanceof Node && !dialog.contains(target)) closeButton.focus();
   }
-
-  function policyChanged(event: Event): void {
-    if (disabled || !store) return;
-    onpolicy((event.currentTarget as HTMLSelectElement).value as MultilinePolicy);
-  }
 </script>
 
 <svelte:window onfocusin={containFocus} />
@@ -78,7 +70,6 @@
     <nav aria-label="Settings sections">
       <a href="#settings-appearance">Appearance</a>
       <a href="#settings-project-labels">Project labels</a>
-      <a href="#settings-export">Export</a>
     </nav>
 
     <div class="settings-content">
@@ -99,22 +90,6 @@
           </div>
         {:else}
           <p class="settings-empty">Open a project to manage labels.</p>
-        {/if}
-      </section>
-
-      <section id="settings-export" class="settings-section" aria-labelledby="settings-export-title">
-        <h3 id="settings-export-title">Export</h3>
-        <label class="settings-field">
-          <span>Multiline export policy</span>
-          <select aria-label="Multiline export policy" value={multilinePolicy} disabled={disabled || !store}
-            onchange={policyChanged}>
-            <option value="escape">Escape line breaks as \n</option>
-            <option value="space">Replace line breaks with spaces</option>
-            <option value="quoted">Preserve line breaks in quoted fields</option>
-          </select>
-        </label>
-        {#if !store}
-          <p class="settings-empty">Open a project to configure export.</p>
         {/if}
       </section>
     </div>

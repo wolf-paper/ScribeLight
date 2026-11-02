@@ -1,10 +1,12 @@
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProject, removeSpeaker, removeTag } from '../domain/project';
-import type { Project } from '../domain/types';
+import { createProject, emptyDraft, removeSpeaker, removeTag } from '../domain/project';
+import type { Annotation, AnnotationDraft, Project } from '../domain/types';
+import { worksheetErrors } from '../domain/validation';
 import { ProjectStore } from './projectStore';
 
 const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000, sampleRate: 1000, channels: 1 };
+const created = '2026-01-01T00:00:00Z';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -15,6 +17,36 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+function clock(): () => string {
+  let tick = 0;
+  return () => `2026-02-01T00:00:${String(tick++).padStart(2, '0')}.000Z`;
+}
+
+/** A project holding `saved-annotation` (40–80 ms); when active, the editor shows it. */
+function projectWithAnnotation(active: boolean): Project {
+  const project = createProject(audio);
+  project.annotations.push({
+    ...project.draft,
+    id: 'saved-annotation',
+    startMs: 40,
+    endMs: 80,
+    transcription: 'saved text',
+    createdAt: created,
+    updatedAt: created
+  });
+  if (active) {
+    project.activeAnnotationId = 'saved-annotation';
+    project.activeSelection = { startMs: 40, endMs: 80 };
+    project.draft = { ...project.draft, startMs: 40, endMs: 80, transcription: 'saved text' };
+  }
+  return project;
+}
+
+const renameFirstSpeaker = (project: Project): Project => ({
+  ...project,
+  speakers: project.speakers.map((speaker, index) => index === 0 ? { ...speaker, label: 'speaker_9' } : speaker)
+});
 
 describe('ProjectStore', () => {
   const bridge = { saveProject: vi.fn<(project: Project) => Promise<void>>(async () => undefined) };
@@ -27,34 +59,74 @@ describe('ProjectStore', () => {
 
   afterEach(() => vi.useRealTimers());
 
-  it('adds then updates the same annotation identity', async () => {
-    const store = new ProjectStore(bridge);
+  it('adds a draft and autosaves later edits into the same annotation identity', async () => {
+    const store = new ProjectStore(bridge, () => 'event-1', clock());
     store.open(createProject(audio));
     store.patchDraft({ startMs: 10, endMs: 20, transcription: 'one' });
-    await store.commitDraft('2026-01-01T00:00:00Z');
-    const id = get(store).project!.annotations[0].id;
+    await expect(store.addDraft()).resolves.toBe(true);
     store.patchDraft({ transcription: 'two' });
-    await store.commitDraft('2026-01-01T00:00:01Z');
 
-    expect(get(store).project!.annotations).toHaveLength(1);
-    expect(get(store).project!.annotations[0]).toMatchObject({
-      id,
-      transcription: 'two',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:01Z'
+    expect(get(store).project).toMatchObject({
+      activeAnnotationId: 'event-1',
+      annotations: [{
+        id: 'event-1',
+        transcription: 'two',
+        createdAt: '2026-02-01T00:00:00.000Z',
+        updatedAt: '2026-02-01T00:00:01.000Z'
+      }]
     });
     vi.advanceTimersByTime(350);
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      annotations: [expect.objectContaining({ id: 'event-1', transcription: 'two' })]
+    }));
   });
 
-  it('keeps an invalid draft local and exposes its field errors', async () => {
+  it('refuses to add a structurally invalid draft, keeps it recoverable, and clears its errors on the next edit', async () => {
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
     store.patchDraft({ startMs: 20, endMs: 10 });
 
-    await expect(store.commitDraft()).resolves.toBe(false);
+    await expect(store.addDraft()).resolves.toBe(false);
     expect(get(store).errors).toMatchObject({ endMs: 'End must be later than start' });
+    expect(get(store).project!.annotations).toEqual([]);
     expect(bridge.saveProject).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenCalledOnce();
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      annotations: [],
+      draft: expect.objectContaining({ startMs: 20, endMs: 10 })
+    }));
+
+    store.patchDraft({ endMs: 30 });
+    expect(get(store).errors).toEqual({});
+  });
+
+  it('refuses to add while an annotation is active', async () => {
+    const store = new ProjectStore(bridge, () => 'event-2');
+    store.open(projectWithAnnotation(true));
+
+    await expect(store.addDraft()).resolves.toBe(false);
+    expect(get(store).project!.annotations.map(({ id }) => id)).toEqual(['saved-annotation']);
+    expect(get(store).errors).toEqual({});
+    expect(bridge.saveProject).not.toHaveBeenCalled();
+  });
+
+  it('stores drafts and edits that still break Yamabiko worksheet rules', async () => {
+    const store = new ProjectStore(bridge, () => 'event-1');
+    store.open(createProject(audio));
+    store.setSelection({ startMs: 10, endMs: 20 });
+    expect(worksheetErrors(get(store).project!.draft, get(store).project!)).toHaveProperty('transcription');
+
+    await expect(store.addDraft()).resolves.toBe(true);
+    store.patchDraft({ transcription: 'words' });
+    store.patchDraft({ transcription: '' });
+
+    const project = get(store).project!;
+    expect(project.annotations).toEqual([expect.objectContaining({ id: 'event-1', transcription: '' })]);
+    expect(worksheetErrors(project.annotations[0], project)).toHaveProperty('transcription');
+    expect(get(store).errors).toEqual({});
   });
 
   it('persists a draft after the recovery debounce', async () => {
@@ -77,7 +149,7 @@ describe('ProjectStore', () => {
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
   });
 
-  it('serializes a recovery write before the later commit snapshot', async () => {
+  it('serializes a recovery write before the later add snapshot', async () => {
     const recovery = deferred<void>();
     const saved = [] as ReturnType<typeof createProject>[];
     bridge.saveProject.mockImplementation((project) => {
@@ -90,15 +162,15 @@ describe('ProjectStore', () => {
     vi.advanceTimersByTime(300);
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
 
-    store.patchDraft({ startMs: 10, endMs: 20, transcription: 'committed snapshot' });
-    const commit = store.commitDraft('2026-01-01T00:00:00Z');
+    store.patchDraft({ startMs: 10, endMs: 20, transcription: 'added snapshot' });
+    const add = store.addDraft();
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
 
     recovery.resolve();
-    await commit;
+    await add;
 
     expect(saved).toHaveLength(2);
-    expect(saved[1].annotations).toMatchObject([{ id: 'event-1', transcription: 'committed snapshot' }]);
+    expect(saved[1].annotations).toMatchObject([{ id: 'event-1', transcription: 'added snapshot' }]);
   });
 
   it('continues saving after a rejected request', async () => {
@@ -188,13 +260,13 @@ describe('ProjectStore', () => {
     });
   });
 
-  it('commits add and update boundaries as one coherent active editor state', async () => {
+  it('adds and autosaves boundaries as one coherent active editor state', async () => {
     const store = new ProjectStore(bridge, () => 'event-1');
     store.open(createProject(audio));
     store.patchBoundaries({ startMs: 10, endMs: 20 });
     store.patchDraft({ transcription: 'first' });
 
-    await expect(store.commitDraft('2026-01-01T00:00:00Z')).resolves.toBe(true);
+    await expect(store.addDraft()).resolves.toBe(true);
     expect(get(store).project).toMatchObject({
       activeAnnotationId: 'event-1',
       activeSelection: { startMs: 10, endMs: 20 },
@@ -203,21 +275,178 @@ describe('ProjectStore', () => {
     });
 
     store.patchBoundaries({ startMs: 30 });
+    expect(get(store)).toMatchObject({
+      project: { annotations: [expect.objectContaining({ startMs: 10, endMs: 20 })] },
+      errors: { endMs: 'End must be later than start' }
+    });
     store.patchBoundaries({ endMs: 40 });
-    await expect(store.commitDraft('2026-01-01T00:00:01Z')).resolves.toBe(true);
     expect(get(store).project).toMatchObject({
       activeAnnotationId: 'event-1',
       activeSelection: { startMs: 30, endMs: 40 },
       draft: { startMs: 30, endMs: 40 },
       annotations: [expect.objectContaining({ id: 'event-1', startMs: 30, endMs: 40 })]
     });
+    expect(get(store).errors).toEqual({});
+  });
+
+  const fieldEdits: [string, (project: Project) => Partial<AnnotationDraft>][] = [
+    ['range', () => ({ startMs: 30, endMs: 90 })],
+    ['event type', () => ({ eventType: 'non_speech' })],
+    ['transcription', () => ({ transcription: 'edited words' })],
+    ['intelligibility', () => ({ intelligibility: 'unintelligible' })],
+    ['speaker', (project) => ({ speakerId: project.speakers[1].id })],
+    ['overlap', () => ({ overlap: 'overlap' })],
+    ['confidence', () => ({ confidence: 'low' })],
+    ['acoustic tag', (project) => ({ acousticTagIds: [project.acousticTags[2].id] })],
+    ['notes', () => ({ notes: 'edited note' })]
+  ];
+
+  it.each(fieldEdits)('autosaves a %s edit into the active annotation', async (_field, edit) => {
+    const project = projectWithAnnotation(true);
+    const patch = edit(project);
+    const store = new ProjectStore(bridge, undefined, clock());
+    store.open(project);
+
+    store.patchDraft(patch);
+
+    const expected = {
+      ...patch,
+      id: 'saved-annotation',
+      createdAt: created,
+      updatedAt: '2026-02-01T00:00:00.000Z'
+    };
+    expect(get(store)).toMatchObject({
+      project: { activeAnnotationId: 'saved-annotation', annotations: [expected] },
+      errors: {}
+    });
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenCalledOnce();
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      annotations: [expect.objectContaining(expected)]
+    }));
+  });
+
+  it('autosaves timeline and boundary-field range edits into the active annotation', () => {
+    const store = new ProjectStore(bridge);
+    store.open(projectWithAnnotation(true));
+
+    store.setSelection({ startMs: 100, endMs: 200 });
+    expect(get(store).project!.annotations[0]).toMatchObject({ startMs: 100, endMs: 200 });
+
+    store.patchBoundaries({ endMs: 300 });
+    expect(get(store).project).toMatchObject({
+      activeSelection: { startMs: 100, endMs: 300 },
+      annotations: [expect.objectContaining({ id: 'saved-annotation', startMs: 100, endMs: 300 })]
+    });
+  });
+
+  it('keeps a structurally invalid edit out of the annotation until it is fixed', () => {
+    const store = new ProjectStore(bridge);
+    store.open(projectWithAnnotation(true));
+
+    store.patchBoundaries({ startMs: 300 });
+    store.patchDraft({ transcription: 'tab\there' });
+    expect(get(store)).toMatchObject({
+      project: {
+        activeSelection: { startMs: 40, endMs: 80 },
+        annotations: [expect.objectContaining({ startMs: 40, endMs: 80, transcription: 'saved text' })]
+      },
+      errors: { endMs: 'End must be later than start', transcription: 'Transcription cannot contain tabs' }
+    });
+
+    store.patchBoundaries({ endMs: 400 });
+    expect(get(store).errors).toEqual({ transcription: 'Transcription cannot contain tabs' });
+    expect(get(store).project!.annotations[0]).toMatchObject({ startMs: 40, endMs: 80 });
+
+    store.patchDraft({ transcription: 'fixed' });
+    expect(get(store).errors).toEqual({});
+    expect(get(store).project!.annotations[0]).toMatchObject({ startMs: 300, endMs: 400, transcription: 'fixed' });
+  });
+
+  it('leaves the active annotation untouched when an edit changes nothing', () => {
+    const store = new ProjectStore(bridge, undefined, clock());
+    store.open(projectWithAnnotation(true));
+    const before = get(store).project!.annotations[0];
+
+    store.patchDraft({ transcription: 'saved text' });
+    store.setSelection({ startMs: 40, endMs: 80 });
+
+    expect(get(store).project!.annotations[0]).toBe(before);
+  });
+
+  it('keeps an autosaved edit typed while a label rename save is unresolved', async () => {
+    const renameSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => renameSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge, undefined, clock());
+    store.open(projectWithAnnotation(true));
+
+    const rename = store.mutateProject(renameFirstSpeaker);
+    store.patchDraft({ transcription: 'typed during rename' });
+    const autosaved = get(store).project!.annotations[0];
+    expect(autosaved.transcription).toBe('typed during rename');
+    expect(bridge.saveProject.mock.calls[0][0].annotations[0].transcription).toBe('saved text');
+
+    renameSave.resolve();
+    await expect(rename).resolves.toBe(true);
+
+    expect(get(store).project).toMatchObject({
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_9' })]),
+      activeAnnotationId: 'saved-annotation',
+      draft: { transcription: 'typed during rename' },
+      annotations: [{ ...autosaved }]
+    });
+    await vi.runAllTimersAsync();
+    expect(bridge.saveProject).toHaveBeenCalledTimes(2);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_9' })]),
+      annotations: [expect.objectContaining({ id: 'saved-annotation', transcription: 'typed during rename' })]
+    }));
+  });
+
+  it('keeps draft edits typed while adding it is unresolved', async () => {
+    const addSave = deferred<void>();
+    bridge.saveProject.mockImplementationOnce(() => addSave.promise).mockResolvedValue(undefined);
+    const store = new ProjectStore(bridge, () => 'event-1');
+    store.open(createProject(audio));
+    store.setSelection({ startMs: 10, endMs: 20 });
+    store.patchDraft({ transcription: 'first' });
+
+    const adding = store.addDraft();
+    store.patchDraft({ transcription: 'first words' });
+    addSave.resolve();
+    await expect(adding).resolves.toBe(true);
+
+    expect(get(store).project).toMatchObject({
+      activeAnnotationId: 'event-1',
+      draft: { transcription: 'first words' },
+      annotations: [expect.objectContaining({ id: 'event-1', transcription: 'first words' })]
+    });
+    await vi.runAllTimersAsync();
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      annotations: [expect.objectContaining({ id: 'event-1', transcription: 'first words' })]
+    }));
+  });
+
+  it('still writes recovery for autosaved edits when a later mutation stores nothing', async () => {
+    const store = new ProjectStore(bridge);
+    store.open(projectWithAnnotation(true));
+    store.patchDraft({ transcription: 'autosaved' });
+
+    await expect(store.mutateProject(() => { throw new Error('Label must be unique'); })).resolves.toBe(false);
+    expect(bridge.saveProject).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(bridge.saveProject).toHaveBeenCalledOnce();
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      annotations: [expect.objectContaining({ transcription: 'autosaved' })]
+    }));
   });
 
   it('restores a selected annotation into the editor and selection', async () => {
     const store = new ProjectStore(bridge, () => 'event-1');
     store.open(createProject(audio));
     const speakerId = get(store).project!.speakers[1].id;
-    const acousticTagId = get(store).project!.acousticTags[1].id;
+    const acousticTagId = get(store).project!.acousticTags.find((tag) => tag.label === 'overlap')!.id;
     store.patchDraft({
       startMs: 10,
       endMs: 20,
@@ -230,8 +459,8 @@ describe('ProjectStore', () => {
       acousticTagIds: [acousticTagId],
       notes: 'all fields'
     });
-    await store.commitDraft('2026-01-01T00:00:00Z');
-    store.clearDraft();
+    await store.addDraft();
+    store.beginDraft(null);
     store.selectAnnotation('event-1');
 
     expect(get(store).project).toMatchObject({
@@ -250,120 +479,126 @@ describe('ProjectStore', () => {
         notes: 'all fields'
       }
     });
+    expect(get(store).errors).toEqual({});
   });
 
-  it('starts a new draft from an active annotation while preserving its selection', async () => {
-    const project = createProject(audio);
-    project.annotations.push({
-      ...project.draft,
-      id: 'saved-annotation',
-      startMs: 40,
-      endMs: 80,
-      transcription: 'saved text',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z'
-    });
+  it('begins a new draft over a selection after autosaving the active annotation', async () => {
+    const project = projectWithAnnotation(false);
     const store = new ProjectStore(bridge);
     store.open(project);
     store.selectAnnotation('saved-annotation');
     store.patchDraft({
-      eventType: 'speech',
-      transcription: 'unsaved edit',
+      transcription: 'autosaved edit',
       intelligibility: 'unintelligible',
       speakerId: project.speakers[1].id,
       overlap: 'overlap',
       confidence: 'low',
       acousticTagIds: [project.acousticTags[0].id],
-      notes: 'discard this metadata'
+      notes: 'kept metadata'
     });
+    await vi.advanceTimersByTimeAsync(300);
     bridge.saveProject.mockClear();
 
-    store.startNewDraftFromSelection();
+    store.beginDraft({ startMs: 500, endMs: 600 });
 
-    expect(get(store).project).toMatchObject({
-      annotations: [expect.objectContaining({ id: 'saved-annotation', transcription: 'saved text' })],
-      activeAnnotationId: null,
-      activeSelection: { startMs: 40, endMs: 80 },
-      draft: {
-        startMs: 40,
-        endMs: 80,
-        eventType: 'speech',
-        transcription: '',
-        intelligibility: 'highly_intelligible',
-        speakerId: project.speakers[0].id,
-        overlap: 'none',
-        confidence: 'high',
-        acousticTagIds: [],
-        notes: ''
-      }
+    expect(get(store)).toMatchObject({
+      project: {
+        annotations: [expect.objectContaining({
+          id: 'saved-annotation',
+          startMs: 40,
+          endMs: 80,
+          transcription: 'autosaved edit',
+          notes: 'kept metadata'
+        })],
+        activeAnnotationId: null,
+        activeSelection: { startMs: 500, endMs: 600 },
+        draft: { ...emptyDraft(), startMs: 500, endMs: 600, speakerId: project.speakers[0].id }
+      },
+      errors: {}
     });
     expect(bridge.saveProject).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(300);
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
       activeAnnotationId: null,
-      activeSelection: { startMs: 40, endMs: 80 }
+      activeSelection: { startMs: 500, endMs: 600 }
     }));
   });
 
-  it('ignores start-new-draft requests that cannot preserve an active saved selection', async () => {
-    const savedProject = () => {
-      const project = createProject(audio);
-      project.annotations.push({
-        ...project.draft,
-        id: 'saved-annotation',
-        startMs: 40,
-        endMs: 80,
-        transcription: 'saved text',
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z'
-      });
-      return project;
-    };
-    const expectIgnored = async (project: Project | null, blocked = false) => {
-      const store = new ProjectStore(bridge);
-      if (project) store.open(project);
-      store.setMutationsBlocked(blocked);
-      store.startNewDraftFromSelection();
-      await vi.advanceTimersByTimeAsync(300);
-      expect(bridge.saveProject).not.toHaveBeenCalled();
-      bridge.saveProject.mockClear();
-    };
+  it('begins an empty draft without a selection and drops unsaved invalid edits', () => {
+    const project = projectWithAnnotation(true);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+    store.patchBoundaries({ startMs: 300 });
+    expect(get(store).errors).toHaveProperty('endMs');
 
-    await expectIgnored(null);
+    store.beginDraft(null);
 
-    const blocked = savedProject();
-    blocked.activeAnnotationId = 'saved-annotation';
-    blocked.activeSelection = { startMs: 40, endMs: 80 };
-    await expectIgnored(blocked, true);
-
-    await expectIgnored(savedProject());
-
-    const missingSelection = savedProject();
-    missingSelection.activeAnnotationId = 'saved-annotation';
-    await expectIgnored(missingSelection);
-
-    for (const activeSelection of [{ startMs: 80, endMs: 40 }, { startMs: 40, endMs: 1_001 }]) {
-      const invalidSelection = savedProject();
-      invalidSelection.activeAnnotationId = 'saved-annotation';
-      invalidSelection.activeSelection = activeSelection;
-      await expectIgnored(invalidSelection);
-    }
-
-    const orphanedActiveAnnotation = savedProject();
-    orphanedActiveAnnotation.activeAnnotationId = 'missing-annotation';
-    orphanedActiveAnnotation.activeSelection = { startMs: 40, endMs: 80 };
-    await expectIgnored(orphanedActiveAnnotation);
+    expect(get(store)).toMatchObject({
+      project: {
+        annotations: [expect.objectContaining({ id: 'saved-annotation', startMs: 40, endMs: 80 })],
+        activeAnnotationId: null,
+        activeSelection: null,
+        draft: { ...emptyDraft(), speakerId: project.speakers[0].id }
+      },
+      errors: {}
+    });
   });
 
-  it('removes an annotation and clears it from the editor', async () => {
+  it('removes the active annotation, clears it from the editor, and returns it', async () => {
     const store = new ProjectStore(bridge, () => 'event-1');
     store.open(createProject(audio));
     store.patchDraft({ startMs: 10, endMs: 20, transcription: 'remove me' });
-    await store.commitDraft('2026-01-01T00:00:00Z');
-    await store.removeAnnotation('event-1');
+    await store.addDraft();
+    const added = get(store).project!.annotations[0];
 
+    await expect(store.removeAnnotation('event-1')).resolves.toEqual(added);
+    expect(get(store).project).toMatchObject({
+      annotations: [],
+      activeAnnotationId: null,
+      activeSelection: null,
+      draft: { ...emptyDraft(), speakerId: get(store).project!.speakers[0].id }
+    });
+    await expect(store.removeAnnotation('event-1')).resolves.toBeNull();
+  });
+
+  it('restores a removed annotation for undo without changing the active annotation', async () => {
+    const project = projectWithAnnotation(true);
+    const other: Annotation = { ...project.annotations[0], id: 'other', startMs: 200, endMs: 300, transcription: 'other text' };
+    project.annotations.push(other);
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const removed = await store.removeAnnotation('other');
+    expect(removed).toEqual(other);
+    expect(get(store).project!.annotations.map(({ id }) => id)).toEqual(['saved-annotation']);
+    store.patchDraft({ notes: 'editing while removed' });
+
+    await expect(store.restoreAnnotation(removed!)).resolves.toBe(true);
+    expect(get(store).project).toMatchObject({
+      annotations: [expect.objectContaining({ id: 'saved-annotation', notes: 'editing while removed' }), other],
+      activeAnnotationId: 'saved-annotation',
+      activeSelection: { startMs: 40, endMs: 80 },
+      draft: { notes: 'editing while removed' }
+    });
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
+      annotations: [expect.objectContaining({ id: 'saved-annotation' }), other]
+    }));
+
+    await expect(store.restoreAnnotation(removed!)).resolves.toBe(false);
+    expect(get(store).project!.annotations).toHaveLength(2);
+  });
+
+  it('refuses to restore an annotation whose speaker no longer exists', async () => {
+    const project = projectWithAnnotation(false);
+    project.annotations[0].speakerId = project.speakers[2].id;
+    const store = new ProjectStore(bridge);
+    store.open(project);
+
+    const removed = await store.removeAnnotation('saved-annotation');
+    await expect(store.mutateProject((value) => removeSpeaker(value, project.speakers[2].id))).resolves.toBe(true);
+
+    await expect(store.restoreAnnotation(removed!)).resolves.toBe(false);
     expect(get(store).project!.annotations).toEqual([]);
-    expect(get(store).project!.activeAnnotationId).toBeNull();
   });
 
   it('keeps local project state and exposes a save failure', async () => {
@@ -385,15 +620,10 @@ describe('ProjectStore', () => {
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
 
-    await expect(store.mutateProject((project) => ({
-      ...project,
-      displayFormat: 'clock'
-    }))).resolves.toBe(false);
+    await expect(store.mutateProject(renameFirstSpeaker)).resolves.toBe(false);
 
-    expect(get(store)).toMatchObject({
-      project: { displayFormat: 'seconds' },
-      saveError: 'disk full'
-    });
+    expect(get(store).project!.speakers[0].label).toBe('speaker_1');
+    expect(get(store).saveError).toBe('disk full');
   });
 
   it('serializes committed mutations so each derives from the latest published project', async () => {
@@ -419,7 +649,7 @@ describe('ProjectStore', () => {
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
 
-    const mutation = store.mutateProject((project) => ({ ...project, displayFormat: 'clock' }));
+    const mutation = store.mutateProject(renameFirstSpeaker);
     store.patchDraft({ notes: 'typed while saving' });
     store.setSelection({ startMs: 12, endMs: 34 });
     await vi.advanceTimersByTimeAsync(300);
@@ -428,35 +658,22 @@ describe('ProjectStore', () => {
     await expect(mutation).resolves.toBe(true);
     await vi.runAllTimersAsync();
 
-    expect(get(store).project).toMatchObject({
-      displayFormat: 'clock',
-      activeSelection: { startMs: 12, endMs: 34 },
-      draft: { startMs: 12, endMs: 34, notes: 'typed while saving' }
-    });
-    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
-      displayFormat: 'clock',
+    const expected = {
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_9' })]),
       activeSelection: { startMs: 12, endMs: 34 },
       draft: expect.objectContaining({ startMs: 12, endMs: 34, notes: 'typed while saving' })
-    }));
+    };
+    expect(get(store).project).toMatchObject(expected);
+    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining(expected));
   });
 
   it('persists a selected annotation merged while a committed mutation save is unresolved', async () => {
-    const project = createProject(audio);
-    project.annotations.push({
-      ...project.draft,
-      id: 'saved-annotation',
-      startMs: 40,
-      endMs: 80,
-      transcription: 'selected while saving',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z'
-    });
     const mutationSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
     const store = new ProjectStore(bridge);
-    store.open(project);
+    store.open(projectWithAnnotation(false));
 
-    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
+    const mutation = store.mutateProject(renameFirstSpeaker);
     store.selectAnnotation('saved-annotation');
     await vi.advanceTimersByTimeAsync(300);
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
@@ -467,29 +684,25 @@ describe('ProjectStore', () => {
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
-      displayFormat: 'clock',
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_9' })]),
       activeAnnotationId: 'saved-annotation',
       activeSelection: { startMs: 40, endMs: 80 },
       draft: expect.objectContaining({
         startMs: 40,
         endMs: 80,
-        transcription: 'selected while saving'
+        transcription: 'saved text'
       })
     }));
   });
 
-  it('persists a cleared editor merged while a committed mutation save is unresolved', async () => {
-    const project = createProject(audio);
-    project.activeAnnotationId = 'saved-annotation';
-    project.activeSelection = { startMs: 40, endMs: 80 };
-    project.draft = { ...project.draft, startMs: 40, endMs: 80, transcription: 'clear while saving' };
+  it('persists a draft begun without a selection while a committed mutation save is unresolved', async () => {
     const mutationSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
     const store = new ProjectStore(bridge);
-    store.open(project);
+    store.open(projectWithAnnotation(true));
 
-    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
-    store.clearDraft();
+    const mutation = store.mutateProject(renameFirstSpeaker);
+    store.beginDraft(null);
     await vi.advanceTimersByTimeAsync(300);
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
 
@@ -499,32 +712,23 @@ describe('ProjectStore', () => {
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
-      displayFormat: 'clock',
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_9' })]),
+      annotations: [expect.objectContaining({ id: 'saved-annotation', transcription: 'saved text' })],
       activeAnnotationId: null,
       activeSelection: null,
       draft: expect.objectContaining({ startMs: 0, endMs: 0, transcription: '' })
     }));
   });
 
-  it('persists a new draft transition merged while a committed mutation save is unresolved', async () => {
-    const project = createProject(audio);
-    project.annotations.push({
-      ...project.draft,
-      id: 'saved-annotation',
-      startMs: 40,
-      endMs: 80,
-      transcription: 'saved text',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z'
-    });
+  it('persists a draft begun over a selection while a committed mutation save is unresolved', async () => {
     const mutationSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
     const store = new ProjectStore(bridge);
-    store.open(project);
+    store.open(projectWithAnnotation(false));
     store.selectAnnotation('saved-annotation');
 
-    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
-    store.startNewDraftFromSelection();
+    const mutation = store.mutateProject(renameFirstSpeaker);
+    store.beginDraft({ startMs: 40, endMs: 80 });
     await vi.advanceTimersByTimeAsync(300);
     expect(bridge.saveProject).toHaveBeenCalledTimes(1);
 
@@ -534,7 +738,7 @@ describe('ProjectStore', () => {
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
-      displayFormat: 'clock',
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_9' })]),
       annotations: [expect.objectContaining({ id: 'saved-annotation', transcription: 'saved text' })],
       activeAnnotationId: null,
       activeSelection: { startMs: 40, endMs: 80 },
@@ -542,32 +746,8 @@ describe('ProjectStore', () => {
     }));
   });
 
-  it('preserves start-new selection when removing the active annotation is unresolved', async () => {
-    const project = createProject(audio);
-    const annotation = {
-      ...project.draft,
-      id: 'saved-annotation',
-      startMs: 40,
-      endMs: 80,
-      transcription: 'saved text',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z'
-    };
-    project.annotations.push(annotation);
-    project.activeAnnotationId = annotation.id;
-    project.activeSelection = { startMs: annotation.startMs, endMs: annotation.endMs };
-    project.draft = {
-      startMs: annotation.startMs,
-      endMs: annotation.endMs,
-      eventType: annotation.eventType,
-      transcription: annotation.transcription,
-      intelligibility: annotation.intelligibility,
-      speakerId: annotation.speakerId,
-      overlap: annotation.overlap,
-      confidence: annotation.confidence,
-      acousticTagIds: [...annotation.acousticTagIds],
-      notes: annotation.notes
-    };
+  it('preserves a draft begun while removing the active annotation is unresolved', async () => {
+    const project = projectWithAnnotation(true);
     const removalSave = deferred<void>();
     const savedProjects: Project[] = [];
     bridge.saveProject.mockImplementation((candidate) => {
@@ -584,7 +764,7 @@ describe('ProjectStore', () => {
       activeAnnotationId: null,
       activeSelection: null
     });
-    store.startNewDraftFromSelection();
+    store.beginDraft({ startMs: 40, endMs: 80 });
     expect(get(store).project).toMatchObject({
       activeAnnotationId: null,
       activeSelection: { startMs: 40, endMs: 80 },
@@ -592,25 +772,14 @@ describe('ProjectStore', () => {
     });
 
     removalSave.resolve();
-    await removal;
+    await expect(removal).resolves.toMatchObject({ id: 'saved-annotation' });
     await vi.runAllTimersAsync();
 
     const expectedEditor = {
       annotations: [],
       activeAnnotationId: null,
       activeSelection: { startMs: 40, endMs: 80 },
-      draft: {
-        startMs: 40,
-        endMs: 80,
-        eventType: 'speech',
-        transcription: '',
-        intelligibility: 'highly_intelligible',
-        speakerId: project.speakers[0].id,
-        overlap: 'none',
-        confidence: 'high',
-        acousticTagIds: [],
-        notes: ''
-      }
+      draft: { ...emptyDraft(), startMs: 40, endMs: 80, speakerId: project.speakers[0].id }
     };
     expect(get(store).project).toMatchObject(expectedEditor);
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
@@ -618,22 +787,12 @@ describe('ProjectStore', () => {
   });
 
   it('recovers a selected annotation after the overlapping committed mutation save fails', async () => {
-    const project = createProject(audio);
-    project.annotations.push({
-      ...project.draft,
-      id: 'saved-annotation',
-      startMs: 40,
-      endMs: 80,
-      transcription: 'recover selection',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z'
-    });
     const failedSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => failedSave.promise).mockResolvedValue(undefined);
     const store = new ProjectStore(bridge);
-    store.open(project);
+    store.open(projectWithAnnotation(false));
 
-    const mutation = store.mutateProject((value) => ({ ...value, displayFormat: 'clock' }));
+    const mutation = store.mutateProject(renameFirstSpeaker);
     store.selectAnnotation('saved-annotation');
     await vi.advanceTimersByTimeAsync(300);
     failedSave.reject(new Error('disk full'));
@@ -642,12 +801,13 @@ describe('ProjectStore', () => {
     await vi.runAllTimersAsync();
 
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
-    expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
-      displayFormat: 'seconds',
+    const recovered = bridge.saveProject.mock.lastCall![0];
+    expect(recovered.speakers[0].label).toBe('speaker_1');
+    expect(recovered).toMatchObject({
       activeAnnotationId: 'saved-annotation',
       activeSelection: { startMs: 40, endMs: 80 },
-      draft: expect.objectContaining({ transcription: 'recover selection' })
-    }));
+      draft: expect.objectContaining({ transcription: 'saved text' })
+    });
   });
 
   it('rebuilds a concurrently selected surviving annotation from the committed candidate', async () => {
@@ -700,65 +860,34 @@ describe('ProjectStore', () => {
     await expect(mutation).resolves.toBe(true);
     await vi.runAllTimersAsync();
 
+    const merged = {
+      startMs: 50,
+      endMs: 90,
+      speakerId: speakerC.id,
+      acousticTagIds: [survivingTag.id],
+      transcription: 'latest transcription edit',
+      notes: 'latest note edit'
+    };
     const expectedEditor = {
       activeAnnotationId: 'annotation-x',
       activeSelection: { startMs: 50, endMs: 90 },
-      draft: expect.objectContaining({
-        startMs: 50,
-        endMs: 90,
-        speakerId: speakerC.id,
-        acousticTagIds: [survivingTag.id],
-        transcription: 'latest transcription edit',
-        notes: 'latest note edit'
-      })
+      draft: expect.objectContaining(merged),
+      annotations: [expect.objectContaining({ id: 'annotation-x', ...merged })]
     };
-    expect(get(store).project).toMatchObject({
-      ...expectedEditor,
-      annotations: [expect.objectContaining({
-        id: 'annotation-x',
-        startMs: 50,
-        endMs: 90,
-        speakerId: speakerC.id,
-        acousticTagIds: [survivingTag.id]
-      })]
-    });
+    expect(get(store).project).toMatchObject(expectedEditor);
     expect(bridge.saveProject).toHaveBeenCalledTimes(2);
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining(expectedEditor));
   });
 
   it('rejects a concurrently selected annotation deleted by the committed candidate', async () => {
-    const project = createProject(audio);
-    const annotation = {
-      ...project.draft,
-      id: 'annotation-x',
-      startMs: 40,
-      endMs: 80,
-      transcription: 'annotation X',
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:00Z'
-    };
-    project.annotations.push(annotation);
-    project.activeAnnotationId = annotation.id;
-    project.activeSelection = { startMs: annotation.startMs, endMs: annotation.endMs };
-    project.draft = {
-      startMs: annotation.startMs,
-      endMs: annotation.endMs,
-      eventType: annotation.eventType,
-      transcription: annotation.transcription,
-      intelligibility: annotation.intelligibility,
-      speakerId: annotation.speakerId,
-      overlap: annotation.overlap,
-      confidence: annotation.confidence,
-      acousticTagIds: [...annotation.acousticTagIds],
-      notes: annotation.notes
-    };
+    const project = projectWithAnnotation(true);
     const mutationSave = deferred<void>();
     bridge.saveProject.mockImplementationOnce(() => mutationSave.promise).mockResolvedValue(undefined);
     const store = new ProjectStore(bridge);
     store.open(project);
 
-    const removal = store.removeAnnotation('annotation-x');
-    store.selectAnnotation('annotation-x');
+    const removal = store.removeAnnotation('saved-annotation');
+    store.selectAnnotation('saved-annotation');
     store.patchDraft({ notes: 'independent note after selection' });
     await vi.advanceTimersByTimeAsync(300);
     mutationSave.resolve();
@@ -813,28 +942,23 @@ describe('ProjectStore', () => {
     const store = new ProjectStore(bridge);
     store.open(createProject(audio));
 
-    const failedMutation = store.mutateProject((project) => ({ ...project, displayFormat: 'clock' }));
+    const failedMutation = store.mutateProject(renameFirstSpeaker);
     store.patchDraft({ notes: 'recover after failure' });
     failedSave.reject(new Error('disk full'));
 
     await expect(failedMutation).resolves.toBe(false);
-    expect(get(store).project).toMatchObject({
-      displayFormat: 'seconds',
-      draft: { notes: 'recover after failure' }
-    });
+    expect(get(store).project!.speakers[0].label).toBe('speaker_1');
+    expect(get(store).project!.draft.notes).toBe('recover after failure');
 
     await expect(store.mutateProject((project) => ({
       ...project,
-      exportSettings: { multilinePolicy: 'quoted' }
+      speakers: project.speakers.map((speaker, index) => index === 1 ? { ...speaker, label: 'speaker_8' } : speaker)
     }))).resolves.toBe(true);
-    expect(get(store).project).toMatchObject({
-      displayFormat: 'seconds',
-      draft: { notes: 'recover after failure' },
-      exportSettings: { multilinePolicy: 'quoted' }
-    });
+    expect(get(store).project!.speakers.map(({ label }) => label)).toEqual(['speaker_1', 'speaker_8', 'speaker_3']);
+    expect(get(store).project!.draft.notes).toBe('recover after failure');
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
       draft: expect.objectContaining({ notes: 'recover after failure' }),
-      exportSettings: { multilinePolicy: 'quoted' }
+      speakers: expect.arrayContaining([expect.objectContaining({ label: 'speaker_8' })])
     }));
   });
 

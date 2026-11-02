@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ImportedTsv } from '../bridge/native';
 import { createProject } from './project';
 import { mergeImportedTsv } from './importTsv';
+import { worksheetErrors } from './validation';
 
 const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1_000, sampleRate: 1_000, channels: 1 };
 const speech = (startMs: number, endMs: number, transcription: string, speaker = 'guest') => ({
@@ -56,7 +57,22 @@ describe('mergeImportedTsv', () => {
     expect(merged.annotations[0].intelligibility).toBe('highly_intelligible');
   });
 
-  it('validates every row before mutating and rejects enum, conditional, and boundary inconsistencies', () => {
+  it('keeps blank review labels and speech not_applicable unset for review instead of rejecting the file', () => {
+    const project = createProject(audio);
+    const merged = mergeImportedTsv(project, {
+      speakers: [], acousticTags: [],
+      annotations: [
+        { ...speech(10, 20, 'subtitle cue'), intelligibility: null, speaker: null, overlap: null, confidence: null, acousticTags: [] },
+        { ...speech(30, 40, 'drum roll'), intelligibility: 'not_applicable' }
+      ]
+    }, () => crypto.randomUUID());
+
+    expect(merged.annotations[0]).toMatchObject({ intelligibility: null, speakerId: null, overlap: null, confidence: null });
+    expect(merged.annotations[1]).toMatchObject({ intelligibility: null, overlap: 'overlap', confidence: 'high' });
+    expect(merged.annotations[1].speakerId).toBe(merged.speakers.find((item) => item.label === 'guest')!.id);
+  });
+
+  it('rejects malformed enums and boundaries but imports Yamabiko rule violations flagged for review', () => {
     const project = createProject(audio);
     const imported: ImportedTsv = {
       speakers: ['guest'], acousticTags: ['laugh'],
@@ -64,7 +80,12 @@ describe('mergeImportedTsv', () => {
     };
     expect(() => mergeImportedTsv(project, imported)).toThrow('confidence');
     expect(project.annotations).toEqual([]);
-    expect(() => mergeImportedTsv(project, { ...imported, annotations: [{ ...speech(10, 20, ''), transcription: ' ' }] })).toThrow('Transcription');
+    const flagged = mergeImportedTsv(project, { ...imported, annotations: [{ ...speech(10, 20, ''), transcription: ' ' }] });
+    expect(worksheetErrors(flagged.annotations[0], flagged)).toMatchObject({
+      speakerId: 'Rename speaker guest to speaker_<number>',
+      transcription: 'Transcription is required for intelligible speech',
+      overlap: 'Overlap and the overlap tag must agree'
+    });
     expect(() => mergeImportedTsv(project, { ...imported, annotations: [speech(900, 1_001, 'outside')] })).toThrow('End');
   });
 

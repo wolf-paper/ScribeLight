@@ -30,9 +30,7 @@ function props(store: ProjectStore | null = null) {
   return {
     store,
     palette: 'ion-magenta' as const,
-    multilinePolicy: 'escape' as const,
     onpalette: vi.fn(),
-    onpolicy: vi.fn(),
     onclose: vi.fn()
   };
 }
@@ -45,10 +43,8 @@ describe('SettingsDialog', () => {
     expect(dialog).toHaveAttribute('open');
     expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Project labels' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Export' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Appearance' })).toHaveAttribute('href', '#settings-appearance');
     expect(screen.getByRole('link', { name: 'Project labels' })).toHaveAttribute('href', '#settings-project-labels');
-    expect(screen.getByRole('link', { name: 'Export' })).toHaveAttribute('href', '#settings-export');
     expect(screen.getByRole('combobox', { name: 'Palette' })).toHaveValue('ion-magenta');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close settings' })).toHaveFocus());
     expect(showModal).toHaveBeenCalledTimes(1);
@@ -78,7 +74,7 @@ describe('SettingsDialog', () => {
     expect(screen.getByRole('region', { name: 'Acoustic tag manager' })).toBeInTheDocument();
   });
 
-  it('offers all multiline policies and reports palette and policy changes for a project', async () => {
+  it('reports palette changes for a project', async () => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));
     const handlers = props(store);
@@ -87,25 +83,13 @@ describe('SettingsDialog', () => {
     await fireEvent.change(screen.getByRole('combobox', { name: 'Palette' }), {
       target: { value: 'sodium-vapor' }
     });
-    const policy = screen.getByRole('combobox', { name: 'Multiline export policy' });
-    expect(policy).toHaveTextContent('Escape line breaks as \\n');
-    expect(policy).toHaveTextContent('Replace line breaks with spaces');
-    expect(policy).toHaveTextContent('Preserve line breaks in quoted fields');
-    await fireEvent.change(policy, { target: { value: 'quoted' } });
 
     expect(handlers.onpalette).toHaveBeenCalledWith('sodium-vapor');
-    expect(handlers.onpolicy).toHaveBeenCalledWith('quoted');
   });
 
-  it('keeps Appearance usable while disabling Export without a project', async () => {
+  it('keeps Appearance usable without a project', async () => {
     const handlers = props();
     render(SettingsDialog, handlers);
-
-    const policy = screen.getByRole('combobox', { name: 'Multiline export policy' });
-    expect(policy).toBeDisabled();
-    expect(screen.getByText('Open a project to configure export.')).toBeInTheDocument();
-    await fireEvent.change(policy, { target: { value: 'quoted' } });
-    expect(handlers.onpolicy).not.toHaveBeenCalled();
 
     const palette = screen.getByRole('combobox', { name: 'Palette' });
     expect(palette).toBeEnabled();

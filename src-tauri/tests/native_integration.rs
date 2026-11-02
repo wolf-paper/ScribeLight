@@ -6,8 +6,8 @@ use scribelight_lib::{
         peaks::{analyze_path, cache_path, read_cache, write_cache},
     },
     model::{
-        Annotation, AnnotationDraft, AudioIdentity, Confidence, EventType, ExportSettings,
-        Intelligibility, LabelDefinition, MultilinePolicy, Overlap, Project, TimeDisplayFormat,
+        Annotation, AnnotationDraft, AudioIdentity, Confidence, EventType, Intelligibility,
+        LabelDefinition, Overlap, Project,
     },
     tsv::{export_tsv, parse_tsv, write_tsv_to_path},
     write_project_tsv_export_to_path,
@@ -52,7 +52,6 @@ fn populated_export_project(identity: AudioIdentity) -> Project {
     Project {
         schema_version: 1,
         audio_identity: identity,
-        display_format: TimeDisplayFormat::Seconds,
         speakers: vec![LabelDefinition {
             id: "speaker-narrator".into(),
             label: "narrator".into(),
@@ -67,10 +66,10 @@ fn populated_export_project(identity: AudioIdentity) -> Project {
             end_ms: 4_000,
             event_type: EventType::Speech,
             transcription: "もう一度\nお願いします".into(),
-            intelligibility: Intelligibility::HighlyIntelligible,
+            intelligibility: Some(Intelligibility::HighlyIntelligible),
             speaker_id: Some("speaker-narrator".into()),
-            overlap: Overlap::Overlap,
-            confidence: Confidence::High,
+            overlap: Some(Overlap::Overlap),
+            confidence: Some(Confidence::High),
             acoustic_tag_ids: vec!["tag-whisper".into()],
             notes: "確認\n済み".into(),
             created_at: "2026-07-19T00:00:00.000Z".into(),
@@ -81,18 +80,15 @@ fn populated_export_project(identity: AudioIdentity) -> Project {
             end_ms: 0,
             event_type: EventType::Speech,
             transcription: String::new(),
-            intelligibility: Intelligibility::HighlyIntelligible,
+            intelligibility: Some(Intelligibility::HighlyIntelligible),
             speaker_id: Some("speaker-narrator".into()),
-            overlap: Overlap::None,
-            confidence: Confidence::High,
+            overlap: Some(Overlap::None),
+            confidence: Some(Confidence::High),
             acoustic_tag_ids: vec![],
             notes: String::new(),
         },
         active_annotation_id: Some("annotation-export".into()),
         active_selection: None,
-        export_settings: ExportSettings {
-            multiline_policy: MultilinePolicy::Escape,
-        },
     }
 }
 
@@ -339,8 +335,8 @@ fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
     let directory = tempfile::tempdir().expect("temporary export directory");
     let output = directory.path().join("renamed-labels.TSV");
     let expected = concat!(
-        "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n",
-        "3.000\t4.000\tspeech\tもう一度\\nお願いします\thighly_intelligible\tnarrator\toverlap\thigh\twhisper\t確認\\n済み\n"
+        "start_seconds\tend_seconds\tevent_type\tjapanese\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n",
+        "3.000\t4.000\tspeech\tもう一度 お願いします\tintelligible\tnarrator\toverlap\thigh\twhisper\t確認 済み\n"
     );
 
     assert_eq!(
@@ -354,22 +350,20 @@ fn production_tsv_export_writes_exact_populated_utf8_bytes_and_round_trips() {
         expected.as_bytes()
     );
 
-    let parsed = parse_tsv(
-        &std::fs::read_to_string(&output).expect("read UTF-8 TSV"),
-        MultilinePolicy::Escape,
-    )
-    .expect("parse exported TSV");
+    let parsed = parse_tsv(&std::fs::read_to_string(&output).expect("read UTF-8 TSV"))
+        .expect("parse exported TSV");
     assert_eq!(parsed.annotations.len(), 1);
     assert_eq!(parsed.annotations[0].start_ms, 3_000);
     assert_eq!(parsed.annotations[0].end_ms, 4_000);
+    assert_eq!(parsed.annotations[0].transcription, "もう一度 お願いします");
     assert_eq!(
-        parsed.annotations[0].transcription,
-        "もう一度\nお願いします"
+        parsed.annotations[0].intelligibility,
+        Some(Intelligibility::HighlyIntelligible)
     );
     assert_eq!(parsed.annotations[0].speaker.as_deref(), Some("narrator"));
-    assert_eq!(parsed.annotations[0].overlap, Overlap::Overlap);
+    assert_eq!(parsed.annotations[0].overlap, Some(Overlap::Overlap));
     assert_eq!(parsed.annotations[0].acoustic_tags, vec!["whisper"]);
-    assert_eq!(parsed.annotations[0].notes, "確認\n済み");
+    assert_eq!(parsed.annotations[0].notes, "確認 済み");
 }
 
 #[test]
@@ -456,7 +450,7 @@ fn analysis_import_and_export_leave_source_hash_size_and_directory_unchanged() {
     let peaks = analyze_path(&path, &AtomicBool::new(false), |_| {}).expect("analyze fixture");
     let imported_text = std::fs::read_to_string(fixture("pass-a.annotation.private.tsv"))
         .expect("read literal UTF-8 TSV");
-    let imported = parse_tsv(&imported_text, MultilinePolicy::Escape).expect("import TSV");
+    let imported = parse_tsv(&imported_text).expect("import TSV");
     assert_eq!(imported.annotations[0].transcription, "待って");
     assert_eq!(imported.annotations[1].transcription, "はい");
 

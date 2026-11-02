@@ -34,6 +34,17 @@ function draftFromAnnotation(annotation: Annotation): AnnotationDraft {
   };
 }
 
+function sameDraft(left: AnnotationDraft, right: AnnotationDraft): boolean {
+  return draftFields.every((field) => field === 'acousticTagIds'
+    ? left.acousticTagIds.length === right.acousticTagIds.length
+      && left.acousticTagIds.every((id, index) => id === right.acousticTagIds[index])
+    : left[field] === right[field]);
+}
+
+function hasErrors(errors: FieldErrors): boolean {
+  return Object.keys(errors).length > 0;
+}
+
 function validDraftSelection(draft: AnnotationDraft, durationMs: number): Selection | null {
   return Number.isInteger(draft.startMs) && Number.isInteger(draft.endMs)
     && draft.startMs >= 0 && draft.endMs > draft.startMs && draft.endMs <= durationMs
@@ -61,12 +72,15 @@ export class ProjectStore implements Readable<ProjectState> {
     speakerId: 0, overlap: 0, confidence: 0, acousticTagIds: 0, notes: 0
   };
   private selectionRevision = 0;
-  private preserveSelectionRevision = 0;
   private activeAnnotationRevision = 0;
   private annotationSelection: AnnotationSelectionContext | null = null;
   readonly subscribe = this.state.subscribe;
 
-  constructor(private readonly bridge: SaveBridge, private readonly id: () => string = () => crypto.randomUUID()) {}
+  constructor(
+    private readonly bridge: SaveBridge,
+    private readonly id: () => string = () => crypto.randomUUID(),
+    private readonly now: () => string = () => new Date().toISOString()
+  ) {}
 
   open(project: Project): void {
     this.cancelRecovery();
@@ -75,7 +89,15 @@ export class ProjectStore implements Readable<ProjectState> {
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
     this.annotationSelection = null;
-    this.state.update((value) => ({ project, errors: {}, saveError: value.saveError }));
+    const opened = project.activeAnnotationId
+      && !project.annotations.some((annotation) => annotation.id === project.activeAnnotationId)
+      ? { ...project, activeAnnotationId: null }
+      : project;
+    this.state.update((value) => ({
+      project: opened,
+      errors: opened.activeAnnotationId ? validateDraft(opened.draft, opened) : {},
+      saveError: value.saveError
+    }));
   }
 
   setMutationsBlocked(blocked: boolean): void {
@@ -85,7 +107,7 @@ export class ProjectStore implements Readable<ProjectState> {
   patchDraft(patch: Partial<AnnotationDraft>): void {
     if (this.mutationsBlocked) return;
     this.markDraftFields(Object.keys(patch) as (keyof AnnotationDraft)[]);
-    this.updateProject((project) => ({ ...project, draft: { ...project.draft, ...patch } }));
+    this.applyEdit((project) => ({ ...project, draft: { ...project.draft, ...patch } }));
     this.scheduleRecovery();
   }
 
@@ -101,7 +123,7 @@ export class ProjectStore implements Readable<ProjectState> {
       current.activeSelection?.startMs !== validSelection.startMs
       || current.activeSelection.endMs !== validSelection.endMs
     )) this.selectionRevision += 1;
-    this.updateProject((project) => ({
+    this.applyEdit((project) => ({
       ...project,
       draft,
       activeSelection: validSelection ?? project.activeSelection
@@ -113,7 +135,7 @@ export class ProjectStore implements Readable<ProjectState> {
     if (this.mutationsBlocked) return;
     this.selectionRevision += 1;
     if (selection) this.markDraftFields(['startMs', 'endMs']);
-    this.updateProject((project) => ({
+    this.applyEdit((project) => ({
       ...project,
       activeSelection: selection,
       draft: selection ? { ...project.draft, ...selection } : project.draft
@@ -128,7 +150,7 @@ export class ProjectStore implements Readable<ProjectState> {
     this.markDraftFields(draftFields);
     this.selectionRevision += 1;
     this.activeAnnotationRevision += 1;
-    this.updateProject((project) => ({
+    this.applyEdit((project) => ({
       ...project,
       activeAnnotationId: id,
       activeSelection: { startMs: annotation.startMs, endMs: annotation.endMs },
@@ -142,10 +164,58 @@ export class ProjectStore implements Readable<ProjectState> {
     this.scheduleRecovery();
   }
 
-  async removeAnnotation(id: string): Promise<void> {
+  /** Leaves any active annotation and starts an unsaved draft, optionally covering `selection`. */
+  beginDraft(selection: Selection | null): void {
     if (this.mutationsBlocked) return;
-    this.cancelRecovery();
-    await this.enqueueMutation((current) => {
+    if (!get(this.state).project) return;
+    const range = selection ? { startMs: selection.startMs, endMs: selection.endMs } : null;
+    this.markDraftFields(draftFields);
+    this.selectionRevision += 1;
+    this.activeAnnotationRevision += 1;
+    this.annotationSelection = null;
+    this.applyEdit((project) => ({
+      ...project,
+      activeAnnotationId: null,
+      activeSelection: range,
+      draft: { ...emptyDraft(), ...range, speakerId: project.speakers[0]?.id ?? null }
+    }));
+    this.scheduleRecovery();
+  }
+
+  /** Stores the new draft as an annotation and makes it active; later edits to it save automatically. */
+  addDraft(): Promise<boolean> {
+    if (this.mutationsBlocked) return Promise.resolve(false);
+    return this.enqueueMutation((project) => {
+      if (project.activeAnnotationId) return null;
+      const errors = validateDraft(project.draft, project);
+      if (hasErrors(errors)) {
+        this.state.update((value) => ({ ...value, errors }));
+        return null;
+      }
+      const now = this.now();
+      const annotation: Annotation = {
+        ...project.draft,
+        acousticTagIds: [...project.draft.acousticTagIds],
+        id: this.id(),
+        createdAt: now,
+        updatedAt: now
+      };
+      return {
+        ...project,
+        annotations: [...project.annotations, annotation],
+        activeAnnotationId: annotation.id,
+        activeSelection: { startMs: annotation.startMs, endMs: annotation.endMs }
+      };
+    }, this.cancelRecovery());
+  }
+
+  /** Resolves to the removed annotation (for undo), or null when nothing was removed. */
+  async removeAnnotation(id: string): Promise<Annotation | null> {
+    if (this.mutationsBlocked) return null;
+    let removed = null as Annotation | null;
+    const succeeded = await this.enqueueMutation((current) => {
+      removed = current.annotations.find((item) => item.id === id) ?? null;
+      if (!removed) return null;
       const wasActive = current.activeAnnotationId === id;
       return {
         ...current,
@@ -154,13 +224,26 @@ export class ProjectStore implements Readable<ProjectState> {
         activeSelection: wasActive ? null : current.activeSelection,
         draft: wasActive ? { ...emptyDraft(), speakerId: current.speakers[0]?.id ?? null } : current.draft
       };
-    });
+    }, this.cancelRecovery());
+    return succeeded ? removed : null;
+  }
+
+  /** Re-inserts a removed annotation without changing which annotation is active. */
+  restoreAnnotation(annotation: Annotation): Promise<boolean> {
+    if (this.mutationsBlocked) return Promise.resolve(false);
+    return this.enqueueMutation((project) => {
+      if (project.annotations.some((item) => item.id === annotation.id)) return null;
+      if (hasErrors(validateDraft(annotation, project))) return null;
+      return {
+        ...project,
+        annotations: [...project.annotations, { ...annotation, acousticTagIds: [...annotation.acousticTagIds] }]
+      };
+    }, this.cancelRecovery());
   }
 
   mutateProject(mutation: (project: Project) => Project): Promise<boolean> {
     if (this.mutationsBlocked) return Promise.resolve(false);
-    this.cancelRecovery();
-    return this.enqueueMutation(mutation);
+    return this.enqueueMutation(mutation, this.cancelRecovery());
   }
 
   async flush(): Promise<boolean> {
@@ -171,81 +254,37 @@ export class ProjectStore implements Readable<ProjectState> {
     return project ? this.persist(project) : true;
   }
 
-  clearDraft(): void {
-    if (this.mutationsBlocked) return;
-    if (!get(this.state).project) return;
-    this.markDraftFields(draftFields);
-    this.selectionRevision += 1;
-    this.activeAnnotationRevision += 1;
-    this.annotationSelection = null;
-    this.updateProject((project) => ({
-      ...project,
-      activeAnnotationId: null,
-      activeSelection: null,
-      draft: { ...emptyDraft(), speakerId: project.speakers[0]?.id ?? null }
-    }));
-    this.scheduleRecovery();
-  }
-
-  startNewDraftFromSelection(): void {
-    if (this.mutationsBlocked) return;
-    const current = get(this.state).project;
-    if (!current?.activeAnnotationId || !current.activeSelection) return;
-    if (!current.annotations.some(({ id }) => id === current.activeAnnotationId)) return;
-    const selection = validDraftSelection(
-      { ...current.draft, ...current.activeSelection },
-      current.audioIdentity.durationMs
-    );
-    if (!selection) return;
-
-    this.markDraftFields(draftFields);
-    this.activeAnnotationRevision += 1;
-    this.preserveSelectionRevision += 1;
-    this.annotationSelection = null;
-    this.updateProject((project) => ({
-      ...project,
-      activeAnnotationId: null,
-      activeSelection: selection,
-      draft: {
-        ...emptyDraft(),
-        ...selection,
-        speakerId: project.speakers[0]?.id ?? null
-      }
-    }));
-    this.scheduleRecovery();
-  }
-
-  async commitDraft(now = new Date().toISOString()): Promise<boolean> {
-    if (this.mutationsBlocked) return false;
-    this.cancelRecovery();
-    return this.enqueueMutation((project) => {
-      const errors = validateDraft(project.draft, project);
-      if (Object.keys(errors).length) {
-        this.state.update((value) => ({ ...value, errors }));
-        return null;
-      }
-      const active = project.annotations.find((item) => item.id === project.activeAnnotationId);
-      const annotation: Annotation = {
-        ...project.draft,
-        id: active?.id ?? this.id(),
-        createdAt: active?.createdAt ?? now,
-        updatedAt: now
-      };
-      const annotations = active
-        ? project.annotations.map((item) => item.id === active.id ? annotation : item)
-        : [...project.annotations, annotation];
-      return {
-        ...project,
-        annotations,
-        activeAnnotationId: annotation.id,
-        activeSelection: { startMs: annotation.startMs, endMs: annotation.endMs },
-        draft: { ...project.draft, startMs: annotation.startMs, endMs: annotation.endMs }
-      };
+  /** Applies a local edit and autosaves the active annotation in the same state update. */
+  private applyEdit(update: (project: Project) => Project): void {
+    this.state.update((value) => {
+      if (!value.project) return value;
+      const { project, errors } = this.syncActiveAnnotation(update(value.project));
+      return { ...value, project, errors };
     });
   }
 
-  private updateProject(update: (project: Project) => Project): void {
-    this.state.update((value) => value.project ? { ...value, project: update(value.project), errors: {} } : value);
+  /**
+   * Rewrites the active annotation from the draft when the draft is structurally valid and differs.
+   * `previous` lets a republished annotation keep the timestamp of an identical earlier autosave.
+   */
+  private syncActiveAnnotation(project: Project, previous?: readonly Annotation[]): { project: Project; errors: FieldErrors } {
+    const index = project.activeAnnotationId
+      ? project.annotations.findIndex((item) => item.id === project.activeAnnotationId)
+      : -1;
+    if (index < 0) return { project, errors: {} };
+    const errors = validateDraft(project.draft, project);
+    const annotation = project.annotations[index];
+    if (hasErrors(errors) || sameDraft(annotation, project.draft)) return { project, errors };
+    const earlier = previous?.find((item) => item.id === annotation.id);
+    const annotations = [...project.annotations];
+    annotations[index] = {
+      ...project.draft,
+      acousticTagIds: [...project.draft.acousticTagIds],
+      id: annotation.id,
+      createdAt: annotation.createdAt,
+      updatedAt: earlier && sameDraft(earlier, project.draft) ? earlier.updatedAt : this.now()
+    };
+    return { project: { ...project, annotations }, errors };
   }
 
   private markDraftFields(fields: readonly (keyof AnnotationDraft)[]): void {
@@ -298,10 +337,14 @@ export class ProjectStore implements Readable<ProjectState> {
     }, 300);
   }
 
-  private enqueueMutation(mutation: (project: Project) => Project | null): Promise<boolean> {
+  /**
+   * `recoveryPending` reports a recovery write the mutation's own save replaces; it is rescheduled
+   * when the mutation stores nothing so earlier edits still reach disk.
+   */
+  private enqueueMutation(mutation: (project: Project) => Project | null, recoveryPending: boolean): Promise<boolean> {
     const request = this.mutationInFlight
-      ? this.mutationQueue.then(() => this.applyMutation(mutation))
-      : this.applyMutation(mutation);
+      ? this.mutationQueue.then(() => this.applyMutation(mutation, recoveryPending))
+      : this.applyMutation(mutation, recoveryPending);
     this.mutationInFlight = true;
     const settled = request.then(() => undefined, () => undefined);
     this.mutationQueue = settled;
@@ -324,14 +367,17 @@ export class ProjectStore implements Readable<ProjectState> {
     return request;
   }
 
-  private async applyMutation(mutation: (project: Project) => Project | null): Promise<boolean> {
+  private async applyMutation(mutation: (project: Project) => Project | null, recoveryPending: boolean): Promise<boolean> {
     const current = get(this.state).project;
     if (!current) return false;
     const projectRevision = this.projectRevision;
     const draftFieldRevisions = { ...this.draftFieldRevisions };
     const selectionRevision = this.selectionRevision;
-    const preserveSelectionRevision = this.preserveSelectionRevision;
     const activeAnnotationRevision = this.activeAnnotationRevision;
+    const keepRecovery = (): false => {
+      if (recoveryPending && this.projectRevision === projectRevision) this.scheduleRecovery();
+      return false;
+    };
     let candidate: Project | null;
     try {
       candidate = mutation(current);
@@ -340,12 +386,13 @@ export class ProjectStore implements Readable<ProjectState> {
         ...value,
         saveError: formatUnknownError(error)
       }));
-      return false;
+      return keepRecovery();
     }
-    if (!candidate) return false;
-    if (!await this.persist(candidate)) return false;
+    if (!candidate) return keepRecovery();
+    if (!await this.persist(candidate)) return keepRecovery();
     if (this.projectRevision !== projectRevision) return false;
-    const latest = get(this.state).project;
+    const latestState = get(this.state);
+    const latest = latestState.project;
     if (!latest) return false;
     const draftChanged = (field: keyof AnnotationDraft): boolean =>
       this.draftFieldRevisions[field] !== draftFieldRevisions[field];
@@ -371,8 +418,7 @@ export class ProjectStore implements Readable<ProjectState> {
     let published: Project = {
       ...candidate,
       draft,
-      activeSelection: this.preserveSelectionRevision !== preserveSelectionRevision
-        || this.selectionRevision !== selectionRevision
+      activeSelection: this.selectionRevision !== selectionRevision
         ? latest.activeSelection
         : candidate.activeSelection,
       activeAnnotationId: this.activeAnnotationRevision === activeAnnotationRevision
@@ -425,15 +471,27 @@ export class ProjectStore implements Readable<ProjectState> {
         draft: candidate.draft
       };
     }
-    if (this.annotationSelection?.annotationId !== published.activeAnnotationId) this.annotationSelection = null;
-    this.state.set({ project: published, errors: {}, saveError: null });
+    // The candidate carries the annotation list from before the save; re-apply edits autosaved meanwhile.
+    const synced = this.syncActiveAnnotation(published, latest.annotations);
+    if (this.annotationSelection?.annotationId !== synced.project.activeAnnotationId) this.annotationSelection = null;
+    this.state.set({
+      project: synced.project,
+      errors: synced.project.activeAnnotationId ? synced.errors : latest.activeAnnotationId ? {} : latestState.errors,
+      saveError: null
+    });
+    const editedMeanwhile = draftFields.some(draftChanged)
+      || this.selectionRevision !== selectionRevision
+      || this.activeAnnotationRevision !== activeAnnotationRevision;
+    // Edits made meanwhile scheduled their own recovery write; otherwise persist the resynced annotation here.
+    if (synced.project !== published && !editedMeanwhile) this.scheduleRecovery();
     return true;
   }
 
-  private cancelRecovery(): void {
-    if (!this.saveTimer) return;
+  private cancelRecovery(): boolean {
+    if (!this.saveTimer) return false;
     clearTimeout(this.saveTimer);
     this.saveTimer = null;
+    return true;
   }
 
   private async save(project: Project): Promise<boolean> {

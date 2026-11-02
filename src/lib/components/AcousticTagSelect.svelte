@@ -85,6 +85,13 @@
     document.getElementById(optionId(tag))?.scrollIntoView?.({ block: 'nearest' });
   }
 
+  /** Escape on an option closes just the list; the app otherwise reads Escape as "new annotation". */
+  function optionKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    event.preventDefault();
+    void close(true);
+  }
+
   function searchKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -129,7 +136,7 @@
             title={`Remove ${tag.label}`}
             {disabled}
             on:click={() => removeTag(tag.id)}
-          >x</button>
+          >×</button>
         </li>
       {/each}
     </ul>
@@ -148,8 +155,8 @@
     bind:this={triggerElement}
     on:click={toggleOpen}
   >
-    <span>{selectedTags.length ? `${selectedTags.length} selected` : 'Select tags'}</span>
-    <span aria-hidden="true">v</span>
+    <span>{selectedTags.length ? 'Edit tags' : 'Add tags'}</span>
+    <span aria-hidden="true">▾</span>
   </button>
 
   {#if open}
@@ -177,6 +184,7 @@
             aria-selected={selected}
             tabindex="-1"
             on:click={() => toggleTag(tag.id)}
+            on:keydown={optionKeydown}
           >
             <span
               class="tag-color-cue"

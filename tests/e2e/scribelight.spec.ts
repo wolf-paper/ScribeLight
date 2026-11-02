@@ -39,6 +39,48 @@ async function timelineMetrics(page: Page, pointerX: number) {
   }, pointerX);
 }
 
+interface TestApi {
+  saveProjectCalls: number;
+  savedProject: Project | null;
+  snapshot: { positionMs: number; loopRange: { startMs: number; endMs: number } | null };
+  nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }>;
+}
+
+function testApi(page: Page): Promise<TestApi> {
+  return page.evaluate(() => {
+    const api = (globalThis as typeof globalThis & { __SCRIBELIGHT_TEST__: TestApi }).__SCRIBELIGHT_TEST__;
+    return {
+      saveProjectCalls: api.saveProjectCalls,
+      savedProject: api.savedProject,
+      snapshot: api.snapshot,
+      nativeCalls: api.nativeCalls
+    };
+  });
+}
+
+async function savedTags(page: Page, startMs: number): Promise<string[] | null> {
+  const project = (await testApi(page)).savedProject;
+  const annotation = project?.annotations.find((item) => item.startMs === startMs);
+  if (!project || !annotation) return null;
+  return annotation.acousticTagIds.map((id) => project.acousticTags.find((tag) => tag.id === id)?.label ?? id);
+}
+
+function workspace(page: Page) {
+  const annotations = page.getByRole('grid', { name: 'Saved annotations' });
+  return {
+    annotations,
+    rows: annotations.locator('.annotation-row'),
+    start: page.getByRole('textbox', { name: 'Start time' }),
+    end: page.getByRole('textbox', { name: 'End time' }),
+    transcription: page.getByRole('textbox', { name: 'Transcription' }),
+    editorTitle: page.locator('#editor-title'),
+    saveState: page.locator('.save-state'),
+    loop: page.getByRole('button', { name: /^Loop range/ }),
+    radio: (group: string, name: string) =>
+      page.getByRole('radiogroup', { name: group }).getByRole('radio', { name, exact: true })
+  };
+}
+
 test.use({ viewport: { width: 1280, height: 800 } });
 
 test('keeps the visible waveform painted after zooming and scrolling past the first canvas tiles', async ({ page }) => {
@@ -93,471 +135,215 @@ test('keeps the visible waveform painted after zooming and scrolling past the fi
   }), { timeout: 2_000 }).toBeGreaterThan(0.99);
 });
 
-test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 export story', async ({ page }) => {
+test('marks, imports, autosaves, deletes, loops, and exports a Yamabiko worksheet', async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openFixture(page, 'complete-story');
+  const { annotations, rows, start, end, transcription, editorTitle, saveState, loop, radio } = workspace(page);
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await expect(page.getByText('Ctrl + wheel to zoom')).toBeVisible();
-
   const layers = await page.getByTestId('timeline-content').locator('[data-timeline-layer]').evaluateAll(
     (elements) => elements.map((element) => element.getAttribute('data-timeline-layer'))
   );
-  expect(layers).toEqual(['top-ruler', 'loop-selection', 'waveform', 'bottom-ruler']);
+  expect(layers).toEqual(['ruler', 'loop-selection', 'waveform']);
 
   const pointerX = 360;
   const viewport = page.getByTestId('timeline-viewport');
   const viewportBounds = await viewport.boundingBox();
   if (!viewportBounds) throw new Error('timeline viewport has no layout bounds');
   const beforeZoom = await timelineMetrics(page, pointerX);
-  await viewport.dispatchEvent('wheel', {
-    ctrlKey: true,
-    deltaY: -100,
-    clientX: viewportBounds.x + pointerX
-  });
+  await viewport.dispatchEvent('wheel', { ctrlKey: true, deltaY: -100, clientX: viewportBounds.x + pointerX });
   await expect.poll(async () => (await timelineMetrics(page, pointerX)).width).toBeGreaterThan(beforeZoom.width);
   const zoomedIn = await timelineMetrics(page, pointerX);
   expect(zoomedIn.anchorMs).toBeCloseTo(beforeZoom.anchorMs, 0);
-  await viewport.dispatchEvent('wheel', {
-    ctrlKey: true,
-    deltaY: 100,
-    clientX: viewportBounds.x + pointerX
-  });
+  await viewport.dispatchEvent('wheel', { ctrlKey: true, deltaY: 100, clientX: viewportBounds.x + pointerX });
   await expect.poll(async () => (await timelineMetrics(page, pointerX)).width).toBeLessThan(zoomedIn.width);
   const zoomedOut = await timelineMetrics(page, pointerX);
   expect(zoomedOut.anchorMs).toBeCloseTo(beforeZoom.anchorMs, 0);
 
+  // Mark a range while listening: I at the playhead, move the playhead, O.
   await page.keyboard.press('i');
   await page.keyboard.press('Shift+ArrowRight');
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { snapshot: { positionMs: number } };
-    }
-  ).__SCRIBELIGHT_TEST__.snapshot.positionMs)).toBe(1_000);
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect.poll(async () => (await testApi(page)).snapshot.positionMs).toBe(2_000);
   await page.keyboard.press('o');
-  await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
-  await expect(page.getByLabel('End milliseconds')).toHaveValue('1000');
+  await expect(start).toHaveValue('0:00.000');
+  await expect(end).toHaveValue('0:02.000');
+  await expect(editorTitle).toHaveText('New annotation');
+  await expect(saveState).toHaveText('Not added yet');
   await expect(page.getByRole('button', { name: 'Move loop selection' })).toBeVisible();
   const waveform = page.getByLabel('Audio waveform');
-  const cursor = waveform.locator('[part~="cursor"]');
-  const regionsContainer = waveform.locator('[part~="regions-container"]');
-  await expect(regionsContainer.locator('[data-scribelight-region="selection"]')).toHaveCount(1);
-  await expect(cursor).toHaveCSS('width', '2px');
-  const [cursorZIndex, regionsZIndex] = await Promise.all([
-    cursor.evaluate((element) => Number(getComputedStyle(element).zIndex)),
-    regionsContainer.evaluate((element) => Number(getComputedStyle(element).zIndex))
-  ]);
-  expect(cursorZIndex).toBeGreaterThan(regionsZIndex);
-  await page.getByRole('button', { name: 'Loop off' }).click();
-  await expect(page.getByRole('button', { name: 'Loop on' })).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
-    }
-  ).__SCRIBELIGHT_TEST__.nativeCalls)).toContainEqual({
-    command: 'set_loop', selection: { startMs: 0, endMs: 1_000 }
+  await expect(waveform.locator('[part~="regions-container"] [data-scribelight-region="selection"]')).toHaveCount(1);
+  const contentWidth = await page.getByTestId('timeline-content').evaluate((content) => content.getBoundingClientRect().width);
+  const playheadX = await page.getByTestId('timeline-playhead').evaluate((playhead) => new DOMMatrix(getComputedStyle(playhead).transform).m41);
+  expect(Math.abs(playheadX - contentWidth * 0.2)).toBeLessThanOrEqual(1);
+
+  await loop.click();
+  await expect(loop).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(async () => (await testApi(page)).nativeCalls).toContainEqual({
+    command: 'set_loop', selection: { startMs: 0, endMs: 2_000 }
   });
 
   await page.getByRole('button', { name: 'Import TSV' }).click();
-  const annotations = page.getByLabel('Saved annotations');
+  await expect(rows).toHaveCount(10);
   await expect(annotations).toContainText('待って');
   await expect(annotations).toContainText('はい');
-  await expect(annotations.locator('.annotation-row')).toHaveCount(10);
-  const annotationScroll = page.getByTestId('annotation-list-scroll');
-  await expect(annotationScroll).toHaveCSS('overflow-y', 'auto');
-  const scrollMetrics = await annotationScroll.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight
-  }));
-  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight);
-  const changedScrollTop = await annotationScroll.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-    return element.scrollTop;
-  });
-  expect(changedScrollTop).toBeGreaterThan(0);
-  await expect(annotations.getByRole('button', { name: /page/i })).toHaveCount(0);
+  await expect(annotations).toHaveCSS('overflow-y', 'auto');
 
-  const seededRows = annotations.getByRole('button', { name: /Remove annotation Scroll seed/ });
-  await expect(seededRows).toHaveCount(8);
+  // Deleting needs no confirmation and can be undone.
   for (let remaining = 8; remaining > 0; remaining -= 1) {
-    await seededRows.first().click();
-    await expect(seededRows).toHaveCount(remaining - 1);
+    await rows.filter({ hasText: 'Scroll seed' }).first().click();
+    await expect(editorTitle).toHaveText(/^Annotation \d+ of \d+$/);
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect(rows).toHaveCount(remaining + 1);
   }
-  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+  await expect(page.getByRole('status', { name: 'Operation status' })).toHaveText('Deleted the annotation at 0:07.900');
+  await page.keyboard.press('Control+z');
+  await expect(rows).toHaveCount(3);
+  await expect(annotations).toContainText('Scroll seed 8');
+  await rows.filter({ hasText: 'Scroll seed 8' }).click();
+  await page.keyboard.press('Delete');
+  await expect(rows).toHaveCount(2);
 
-  const editorBounds = await page.locator('.active-text-editor').boundingBox();
-  const listBounds = await page.locator('.annotation-table').boundingBox();
-  if (!editorBounds || !listBounds) throw new Error('annotation workspace has no layout bounds');
-  expect(editorBounds.y + editorBounds.height).toBeLessThanOrEqual(listBounds.y);
+  const listBounds = await annotations.boundingBox();
+  const editorBounds = await page.locator('.editor').boundingBox();
+  if (!listBounds || !editorBounds) throw new Error('annotation workspace has no layout bounds');
+  expect(editorBounds.x).toBeGreaterThanOrEqual(listBounds.x + listBounds.width - 1);
 
-  const passiveRegions = page.locator('[data-scribelight-region="annotation"]');
+  // Deleting leaves a fresh draft; hovering previews a saved range without changing anything.
+  await expect(editorTitle).toHaveText('New annotation');
   const previewRegions = page.locator('[data-scribelight-region="preview"]');
-  await expect(passiveRegions).toHaveCount(2);
+  await expect(page.locator('[data-scribelight-region="annotation"]')).toHaveCount(2);
   await expect(previewRegions).toHaveCount(0);
-  const firstRow = annotations.locator('.annotation-row').first();
-  const stateBeforeHover = await page.evaluate(() => {
-    const testState = (globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: {
-        saveProjectCalls: number;
-        savedProject: Project | null;
-        nativeCalls: Array<{ command: string }>;
-      };
-    }).__SCRIBELIGHT_TEST__;
-    return {
-      saveProjectCalls: testState.saveProjectCalls,
-      project: testState.savedProject,
-      nativeCalls: testState.nativeCalls
-    };
-  });
-  const boundariesBeforeHover = {
-    start: await page.getByLabel('Start milliseconds').inputValue(),
-    end: await page.getByLabel('End milliseconds').inputValue()
-  };
-  await firstRow.hover();
+  const beforeHover = await testApi(page);
+  const boundariesBeforeHover = [await start.inputValue(), await end.inputValue()];
+  await rows.first().hover();
   await expect(previewRegions).toHaveCount(1);
   await page.waitForTimeout(400);
-  const stateAfterHover = await page.evaluate(() => {
-    const testState = (globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: {
-        saveProjectCalls: number;
-        savedProject: Project | null;
-        nativeCalls: Array<{ command: string }>;
-      };
-    }).__SCRIBELIGHT_TEST__;
-    return {
-      saveProjectCalls: testState.saveProjectCalls,
-      project: testState.savedProject,
-      nativeCalls: testState.nativeCalls
-    };
-  });
-  const boundariesAfterHover = {
-    start: await page.getByLabel('Start milliseconds').inputValue(),
-    end: await page.getByLabel('End milliseconds').inputValue()
-  };
-  expect.soft(stateAfterHover.saveProjectCalls).toBe(stateBeforeHover.saveProjectCalls);
-  expect.soft(stateAfterHover.project).toEqual(stateBeforeHover.project);
-  expect.soft(stateAfterHover.nativeCalls).toEqual(stateBeforeHover.nativeCalls);
-  expect.soft(boundariesAfterHover).toEqual(boundariesBeforeHover);
-  expect.soft(await annotations.locator('.annotation-row').evaluateAll((rows) =>
-    rows.map((row) => row.getAttribute('aria-current'))
-  )).toEqual([null, null]);
-  await page.getByText('Ctrl + wheel to zoom').hover();
+  expect(await testApi(page)).toEqual(beforeHover);
+  expect([await start.inputValue(), await end.inputValue()]).toEqual(boundariesBeforeHover);
+  expect(await rows.evaluateAll((elements) => elements.map((row) => row.getAttribute('aria-selected')))).toEqual(['false', 'false']);
+  await page.getByLabel('Playback position').hover();
   await expect(previewRegions).toHaveCount(0);
 
-  const stateBeforeWaveformHover = await page.evaluate(() => {
-    const testState = (globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: {
-        saveProjectCalls: number;
-        savedProject: Project | null;
-        nativeCalls: Array<{ command: string }>;
-      };
-    }).__SCRIBELIGHT_TEST__;
-    return {
-      saveProjectCalls: testState.saveProjectCalls,
-      project: structuredClone(testState.savedProject),
-      nativeCalls: structuredClone(testState.nativeCalls)
-    };
-  });
-  const boundariesBeforeWaveformHover = {
-    start: await page.getByLabel('Start milliseconds').inputValue(),
-    end: await page.getByLabel('End milliseconds').inputValue()
-  };
-  await passiveRegions.first().hover({ position: { x: 1, y: 1 } });
-  await expect(previewRegions).toHaveCount(1);
-  await page.waitForTimeout(400);
-  const stateAfterWaveformHover = await page.evaluate(() => {
-    const testState = (globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: {
-        saveProjectCalls: number;
-        savedProject: Project | null;
-        nativeCalls: Array<{ command: string }>;
-      };
-    }).__SCRIBELIGHT_TEST__;
-    return {
-      saveProjectCalls: testState.saveProjectCalls,
-      project: structuredClone(testState.savedProject),
-      nativeCalls: structuredClone(testState.nativeCalls)
-    };
-  });
-  expect(stateAfterWaveformHover).toEqual(stateBeforeWaveformHover);
-  expect({
-    start: await page.getByLabel('Start milliseconds').inputValue(),
-    end: await page.getByLabel('End milliseconds').inputValue()
-  }).toEqual(boundariesBeforeWaveformHover);
-  expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
-    rows.map((row) => row.getAttribute('aria-current'))
-  )).toEqual([null, null]);
+  // A single click on a saved range opens it; at 0:02.300 only the second range is under the pointer.
+  const content = await page.getByTestId('timeline-content').boundingBox();
+  const waveBounds = await waveform.boundingBox();
+  if (!content || !waveBounds) throw new Error('timeline has no layout bounds');
+  await page.mouse.click(content.x + content.width * 0.23, waveBounds.y + waveBounds.height / 2);
+  await expect(start).toHaveValue('0:01.500');
+  await expect(end).toHaveValue('0:02.500');
+  await expect(editorTitle).toHaveText('Annotation 2 of 2');
+  await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true');
 
-  await page.getByText('Ctrl + wheel to zoom').hover();
-  await expect(previewRegions).toHaveCount(0);
-  await passiveRegions.nth(1).dblclick();
-  await expect(page.getByLabel('Start milliseconds')).toHaveValue('1500');
-  await expect(page.getByLabel('End milliseconds')).toHaveValue('2500');
-  await expect(annotations.locator('.annotation-row').nth(1)).toHaveAttribute('aria-current', 'true');
-  expect(await page.locator('.selection-inspector .actions button').evaluateAll((buttons) =>
-    buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent?.trim())
-  )).toEqual(['Update annotation', 'Add annotation', 'Clear annotation']);
+  // Edits to an open annotation save themselves.
+  await transcription.fill('Second annotation updated');
+  await radio('Confidence', 'Low').click();
+  await expect(rows.nth(1)).toContainText('Second annotation updated');
+  await expect(saveState).toHaveText('Saved');
+  await expect.poll(async () => (await testApi(page)).savedProject?.annotations
+    .find(({ startMs }) => startMs === 1_500)).toMatchObject({ transcription: 'Second annotation updated', confidence: 'low' });
+  await expect(page.getByRole('button', { name: /update/i })).toHaveCount(0);
 
-  const selectedTranscription = page.getByRole('textbox', { name: 'Transcription' });
-  await selectedTranscription.fill('Second annotation updated');
-  await page.getByRole('button', { name: 'Update annotation' }).click();
-  await expect(annotations).toContainText('Second annotation updated');
-  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
-  await page.getByRole('button', { name: 'Add annotation' }).click();
-  await expect(page.getByLabel('Start milliseconds')).toHaveValue('1500');
-  await expect(page.getByLabel('End milliseconds')).toHaveValue('2500');
-  expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
-    rows.map((row) => row.getAttribute('aria-current'))
-  )).toEqual([null, null]);
-  await expect(selectedTranscription).toHaveValue('');
+  await page.getByRole('button', { name: /^New annotation/ }).click();
+  await expect(editorTitle).toHaveText('New annotation');
+  await expect(transcription).toHaveValue('');
   await expect(page.getByLabel('Notes')).toHaveValue('');
-  await expect(page.getByLabel('Speaker').locator('option:checked')).toHaveText('speaker_1');
-  await expect(page.getByLabel('Event type')).toHaveValue('speech');
-  await expect(page.getByLabel('Intelligibility')).toHaveValue('highly_intelligible');
-  await expect(page.getByLabel('Overlap')).toHaveValue('none');
-  await expect(page.getByLabel('Confidence')).toHaveValue('high');
+  await expect(radio('Speaker', 'speaker_1')).toHaveAttribute('aria-checked', 'true');
+  await expect(radio('Intelligibility', 'Intelligible')).toHaveAttribute('aria-checked', 'true');
+  await expect(radio('Overlap', 'No')).toHaveAttribute('aria-checked', 'true');
+  await expect(radio('Confidence', 'High')).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('button', { name: /^Remove .* acoustic tag$/ })).toHaveCount(0);
-  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
+  expect(await rows.evaluateAll((elements) => elements.map((row) => row.getAttribute('aria-selected')))).toEqual(['false', 'false']);
+  await expect.poll(async () => (await testApi(page)).snapshot.loopRange).toBeNull();
+  await expect(loop).toHaveAttribute('aria-pressed', 'false');
 
-  await firstRow.click();
-  await expect(page.getByLabel('Start milliseconds')).toHaveValue('1000');
-  await expect(page.getByLabel('End milliseconds')).toHaveValue('2000');
-  const originalTranscription = await selectedTranscription.inputValue();
-  expect(originalTranscription).not.toBe('');
-  await expect(page.getByRole('button', { name: 'Update annotation' })).toBeVisible();
+  // Tags and the Overlap choice stay in step on the open annotation.
+  await rows.first().click();
+  await expect(start).toHaveValue('0:01.000');
   await page.getByRole('combobox', { name: 'Acoustic tags' }).click();
   await page.getByRole('option', { name: 'breath' }).click();
-  await expect(page.getByRole('button', { name: 'Remove breath acoustic tag' })).toBeVisible();
-  await selectedTranscription.fill('Selected annotation updated');
-  await selectedTranscription.press('Enter');
-  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
-  await expect(annotations).toContainText('Selected annotation updated');
-  await selectedTranscription.fill(originalTranscription);
+  await expect.poll(() => savedTags(page, 1_000)).toEqual(['quiet_dialogue', 'overlap', 'breath']);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('listbox', { name: 'Acoustic tags' })).toHaveCount(0);
+  await expect(editorTitle).toHaveText('Annotation 1 of 2');
   await page.getByRole('button', { name: 'Remove breath acoustic tag' }).click();
-  await selectedTranscription.press('Enter');
-  await page.getByLabel('Start milliseconds').fill('0');
-  await page.getByLabel('Start milliseconds').press('Tab');
-  await page.getByLabel('End milliseconds').fill('1000');
-  await page.getByLabel('End milliseconds').press('Tab');
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
-    }
-  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toEqual({ startMs: 0, endMs: 1_000 });
-  const clearAnnotation = page.getByRole('button', { name: 'Clear annotation' });
-  await expect(clearAnnotation).toHaveText('X');
-  await clearAnnotation.click();
-  await expect(page.getByRole('button', { name: 'Add annotation' })).toBeVisible();
-  await expect(page.getByLabel('Start milliseconds')).toHaveValue('0');
-  await expect(page.getByLabel('End milliseconds')).toHaveValue('0');
-  await expect(page.getByRole('button', { name: 'Move loop selection' })).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
-    }
-  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toBeNull();
-  expect(await annotations.locator('.annotation-row').evaluateAll((rows) =>
-    rows.map((row) => row.getAttribute('aria-current'))
-  )).toEqual([null, null]);
-  await expect(selectedTranscription).toHaveValue('');
-  await expect(page.getByLabel('Notes')).toHaveValue('');
-  await expect(page.getByLabel('Speaker').locator('option:checked')).toHaveText('speaker_1');
-  await expect(page.getByLabel('Event type')).toHaveValue('speech');
-  await expect(page.getByLabel('Intelligibility')).toHaveValue('highly_intelligible');
-  await expect(page.getByLabel('Overlap')).toHaveValue('none');
-  await expect(page.getByLabel('Confidence')).toHaveValue('high');
-  await expect(page.getByRole('button', { name: /^Remove .* acoustic tag$/ })).toHaveCount(0);
-  await expect(annotations.locator('.annotation-row')).toHaveCount(2);
-  await expect.poll(() => page.evaluate(() => {
-    const project = (globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { savedProject: Project | null };
-    }).__SCRIBELIGHT_TEST__.savedProject;
-    if (!project) return null;
-    return {
-      activeAnnotationId: project.activeAnnotationId,
-      activeSelection: project.activeSelection,
-      annotations: project.annotations.length,
-      draft: {
-        startMs: project.draft.startMs,
-        endMs: project.draft.endMs,
-        eventType: project.draft.eventType,
-        transcription: project.draft.transcription,
-        intelligibility: project.draft.intelligibility,
-        speaker: project.speakers.find(({ id }) => id === project.draft.speakerId)?.label ?? null,
-        overlap: project.draft.overlap,
-        confidence: project.draft.confidence,
-        acousticTagIds: project.draft.acousticTagIds,
-        notes: project.draft.notes
-      }
-    };
-  })).toEqual({
-    activeAnnotationId: null,
-    activeSelection: null,
-    annotations: 2,
-    draft: {
-      startMs: 0,
-      endMs: 0,
-      eventType: 'speech',
-      transcription: '',
-      intelligibility: 'highly_intelligible',
-      speaker: 'speaker_1',
-      overlap: 'none',
-      confidence: 'high',
-      acousticTagIds: [],
-      notes: ''
-    }
-  });
+  await expect.poll(() => savedTags(page, 1_000)).toEqual(['quiet_dialogue', 'overlap']);
+  await radio('Overlap', 'No').click();
+  await expect.poll(() => savedTags(page, 1_000)).toEqual(['quiet_dialogue']);
+  await radio('Overlap', 'Yes').click();
+  await expect.poll(() => savedTags(page, 1_000)).toEqual(['quiet_dialogue', 'overlap']);
 
-  const startBoundary = page.getByLabel('Start milliseconds');
-  const endBoundary = page.getByLabel('End milliseconds');
-  const loopCallsBeforeEdit = await page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string }> };
-    }
-  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length);
-  await startBoundary.fill('');
-  await startBoundary.pressSequentially('3000');
-  await expect(startBoundary).toHaveValue('3000');
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string }> };
-    }
-  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
-  await startBoundary.press('Tab');
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
-    }
-  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toBeNull();
-  await endBoundary.fill('');
-  await endBoundary.pressSequentially('4000');
-  await expect(endBoundary).toHaveValue('4000');
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string }> };
-    }
-  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop').length)).toBe(loopCallsBeforeEdit);
-  await endBoundary.press('Tab');
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: {
-        snapshot: { loopRange: { startMs: number; endMs: number } | null };
-        nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }>;
-      };
-    }
-  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toBeNull();
-  await page.getByRole('button', { name: 'Loop off' }).click();
-  await expect.poll(() => page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { snapshot: { loopRange: { startMs: number; endMs: number } | null } };
-    }
-  ).__SCRIBELIGHT_TEST__.snapshot.loopRange)).toEqual({ startMs: 3_000, endMs: 4_000 });
-  const recordedLoops = await page.evaluate(() => (
-    globalThis as typeof globalThis & {
-      __SCRIBELIGHT_TEST__: { nativeCalls: Array<{ command: string; selection?: { startMs: number; endMs: number } }> };
-    }
-  ).__SCRIBELIGHT_TEST__.nativeCalls.filter(({ command }) => command === 'set_loop'));
-  expect(recordedLoops.at(-1)).toEqual({
-    command: 'set_loop', selection: { startMs: 3_000, endMs: 4_000 }
-  });
-  expect(recordedLoops).not.toContainEqual({
-    command: 'set_loop', selection: { startMs: 3_000, endMs: 1_000 }
-  });
+  // Type a new range, loop it, and add it with Enter.
+  await page.getByRole('button', { name: /^New annotation/ }).click();
+  await start.fill('0:03');
+  await start.press('Enter');
+  await expect(end).toHaveValue('0:04.000');
+  await end.fill('4.5');
+  await end.press('Tab');
+  await expect(end).toHaveValue('0:04.500');
+  await loop.click();
+  await expect.poll(async () => (await testApi(page)).snapshot.loopRange).toEqual({ startMs: 3_000, endMs: 4_500 });
   const highlightedRange = await page.getByRole('button', { name: 'Move loop selection' }).evaluate((button) => {
     const selection = button.parentElement;
     const track = selection?.parentElement;
     if (!selection || !track) throw new Error('selection highlight has no geometry');
     const trackBounds = track.getBoundingClientRect();
     const selectionBounds = selection.getBoundingClientRect();
-    if (!(trackBounds.width > 0) || !(selectionBounds.width > 0)) {
-      throw new Error('selection highlight has invalid geometry');
-    }
     const millisecondsPerPixel = 10_000 / trackBounds.width;
-    const startMs = (selectionBounds.left - trackBounds.left) * millisecondsPerPixel;
-    const endMs = (selectionBounds.right - trackBounds.left) * millisecondsPerPixel;
-    return { startMs, endMs, millisecondsPerPixel };
+    return {
+      startMs: (selectionBounds.left - trackBounds.left) * millisecondsPerPixel,
+      endMs: (selectionBounds.right - trackBounds.left) * millisecondsPerPixel,
+      millisecondsPerPixel
+    };
   });
   expect(Math.abs(highlightedRange.startMs - 3_000)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
-  expect(Math.abs(highlightedRange.endMs - 4_000)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
-  const transcription = page.getByRole('textbox', { name: 'Transcription' });
-  await transcription.fill('もう一度');
-  await transcription.press('Enter');
-  await expect(annotations.locator('.annotation-row')).toHaveCount(3);
-  await expect(annotations).toContainText('もう一度');
-
-  await transcription.fill('もう一度');
-  await transcription.press('Shift+Enter');
-  await expect(transcription).toHaveValue('もう一度\n');
+  expect(Math.abs(highlightedRange.endMs - 4_500)).toBeLessThanOrEqual(highlightedRange.millisecondsPerPixel);
   await transcription.fill('もう一度\n続き');
+  await expect(transcription).toHaveValue('もう一度 続き');
   await transcription.press('Enter');
-  await expect(annotations).toContainText('もう一度\n続き');
-  await expect(annotations.locator('.annotation-row')).toHaveCount(3);
+  await expect(rows).toHaveCount(3);
+  await expect(editorTitle).toHaveText('Annotation 3 of 3');
+  await expect(annotations).toContainText('もう一度 続き');
+  await expect(page.getByText('Ready for Yamabiko')).toBeVisible();
 
   await page.getByRole('button', { name: 'Settings' }).click();
   const speaker = page.getByLabel('Rename speaker_1');
-  await speaker.fill('narrator');
+  await speaker.fill('speaker_7');
   await speaker.blur();
-  await expect(page.getByLabel('Rename narrator')).toHaveValue('narrator');
+  await expect(page.getByLabel('Rename speaker_7')).toHaveValue('speaker_7');
   const tag = page.getByLabel('Rename quiet_dialogue');
   await tag.fill('whisper');
   await tag.blur();
-  await expect(page.getByLabel('Rename whisper')).toHaveValue('whisper');
+  await expect(page.getByLabel('Project labels').getByRole('alert')).toContainText("Acoustic tags must be one of Yamabiko's tags");
+  await expect(page.getByLabel('Rename quiet_dialogue')).toBeVisible();
   await page.getByRole('button', { name: 'Close settings' }).click();
   await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
   await page.getByRole('button', { name: 'Export TSV' }).click();
-  await expect(page.getByRole('status', { name: 'Operation status' }))
-    .toContainText('Exported 3 annotations');
+  await expect(page.getByRole('status', { name: 'Operation status' })).toHaveText('Exported 3 annotations');
   const exported = await page.evaluate(() => (
     globalThis as typeof globalThis & {
       __SCRIBELIGHT_LAST_EXPORT__: { path: string; project: Project };
     }
   ).__SCRIBELIGHT_LAST_EXPORT__);
   expect(exported.path).toBe('scribelight-export.tsv');
-
   const project = exported.project;
-  expect(project.annotations).toHaveLength(3);
-  expect(project.activeSelection).toEqual({ startMs: 3_000, endMs: 4_000 });
-  expect(project.speakers.map(({ label }) => label)).toContain('narrator');
-  expect(project.acousticTags.map(({ label }) => label)).toContain('whisper');
-  const portableAnnotations = project.annotations
+  expect(project.activeSelection).toEqual({ startMs: 3_000, endMs: 4_500 });
+  expect(project.annotations
     .map((annotation) => ({
       startMs: annotation.startMs,
       endMs: annotation.endMs,
       transcription: annotation.transcription,
       overlap: annotation.overlap,
+      confidence: annotation.confidence,
       speaker: project.speakers.find(({ id }) => id === annotation.speakerId)?.label ?? null,
-      tags: annotation.acousticTagIds.map((tagId) =>
-        project.acousticTags.find(({ id }) => id === tagId)?.label
-      )
+      tags: annotation.acousticTagIds.map((tagId) => project.acousticTags.find(({ id }) => id === tagId)?.label)
     }))
-    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
-  expect(portableAnnotations).toEqual([
-    {
-      startMs: 1_000,
-      endMs: 2_000,
-      transcription: '待って',
-      overlap: 'overlap',
-      speaker: 'narrator',
-      tags: ['whisper']
-    },
-    {
-      startMs: 1_500,
-      endMs: 2_500,
-      transcription: 'Second annotation updated',
-      overlap: 'overlap',
-      speaker: 'speaker_2',
-      tags: ['breath']
-    },
-    {
-      startMs: 3_000,
-      endMs: 4_000,
-      transcription: 'もう一度\n続き',
-      overlap: 'none',
-      speaker: 'narrator',
-      tags: []
-    }
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs)).toEqual([
+    { startMs: 1_000, endMs: 2_000, transcription: '待って', overlap: 'overlap', confidence: 'high', speaker: 'speaker_7', tags: ['quiet_dialogue', 'overlap'] },
+    { startMs: 1_500, endMs: 2_500, transcription: 'Second annotation updated', overlap: 'overlap', confidence: 'low', speaker: 'speaker_2', tags: ['breath', 'overlap'] },
+    { startMs: 3_000, endMs: 4_500, transcription: 'もう一度 続き', overlap: 'none', confidence: 'high', speaker: 'speaker_7', tags: [] }
   ]);
   expect(browserErrors).toEqual([]);
 });
@@ -565,20 +351,21 @@ test('runs the complete overlapping annotation, zoom, loop, rename, and UTF-8 ex
 test('recovers the saved project after a renderer reopen', async ({ page }) => {
   const browserErrors = collectBrowserErrors(page);
   await openFixture(page, 'recovery');
+  const { annotations, start, transcription } = workspace(page);
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('combobox', { name: 'Palette' }).selectOption('krypton-glow');
   await expect(page.locator('html')).toHaveAttribute('data-palette', 'krypton-glow');
   await page.getByRole('button', { name: 'Close settings' }).click();
-  await page.getByLabel('Start milliseconds').fill('5000');
-  await page.getByLabel('End milliseconds').fill('6000');
-  await page.getByRole('textbox', { name: 'Transcription' }).fill('再開');
-  await page.getByRole('textbox', { name: 'Transcription' }).press('Enter');
-  await expect(page.getByLabel('Saved annotations')).toContainText('再開');
+  await start.fill('0:05');
+  await start.press('Enter');
+  await transcription.fill('再開');
+  await transcription.press('Enter');
+  await expect(annotations).toContainText('再開');
 
   await page.goto(fixtureUrl('recovery'));
   await expect(page.locator('html')).toHaveAttribute('data-palette', 'krypton-glow');
   await page.getByRole('button', { name: 'Open audio' }).click();
   await expect(page.getByLabel('Audio waveform')).toBeVisible();
-  await expect(page.getByLabel('Saved annotations')).toContainText('再開');
+  await expect(page.getByRole('grid', { name: 'Saved annotations' })).toContainText('再開');
   expect(browserErrors).toEqual([]);
 });

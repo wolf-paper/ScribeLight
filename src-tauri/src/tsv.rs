@@ -3,11 +3,12 @@ use atomic_write_file::AtomicWriteFile;
 use serde::{Deserialize, Serialize};
 use std::{io::Write, path::Path};
 
+/// Yamabiko's `WORKSHEET_COLUMNS`, in order.
 const HEADER: [&str; 10] = [
     "start_seconds",
     "end_seconds",
     "event_type",
-    "transcription",
+    "japanese",
     "intelligibility",
     "speaker",
     "overlap",
@@ -15,21 +16,9 @@ const HEADER: [&str; 10] = [
     "acoustic_tags",
     "notes",
 ];
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TsvRow {
-    start_seconds: String,
-    end_seconds: String,
-    event_type: String,
-    #[serde(alias = "japanese")]
-    transcription: String,
-    intelligibility: String,
-    speaker: String,
-    overlap: String,
-    confidence: String,
-    acoustic_tags: String,
-    notes: String,
-}
+/// Older ScribeLight exports named column four `transcription`.
+const LEGACY_TEXT_COLUMN: &str = "transcription";
+const TEXT_COLUMN_INDEX: usize = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -38,10 +27,10 @@ pub struct ImportedAnnotation {
     pub end_ms: u64,
     pub event_type: EventType,
     pub transcription: String,
-    pub intelligibility: Intelligibility,
+    pub intelligibility: Option<Intelligibility>,
     pub speaker: Option<String>,
-    pub overlap: Overlap,
-    pub confidence: Confidence,
+    pub overlap: Option<Overlap>,
+    pub confidence: Option<Confidence>,
     pub acoustic_tags: Vec<String>,
     pub notes: String,
 }
@@ -52,40 +41,6 @@ pub struct ImportedTsv {
     pub annotations: Vec<ImportedAnnotation>,
     pub speakers: Vec<String>,
     pub acoustic_tags: Vec<String>,
-}
-
-pub fn encode_multiline(value: &str, policy: MultilinePolicy) -> String {
-    let normalized = value.replace("\r\n", "\n").replace('\r', "\n");
-    match policy {
-        MultilinePolicy::Escape => normalized.replace('\\', "\\\\").replace('\n', "\\n"),
-        MultilinePolicy::Space => normalized.replace('\n', " "),
-        MultilinePolicy::Quoted => normalized,
-    }
-}
-
-pub fn decode_multiline(value: &str, policy: MultilinePolicy) -> String {
-    if policy != MultilinePolicy::Escape {
-        return value.to_owned();
-    }
-
-    let mut decoded = String::new();
-    let mut characters = value.chars();
-    while let Some(character) = characters.next() {
-        if character != '\\' {
-            decoded.push(character);
-            continue;
-        }
-        match characters.next() {
-            Some('n') => decoded.push('\n'),
-            Some('\\') => decoded.push('\\'),
-            Some(other) => {
-                decoded.push('\\');
-                decoded.push(other);
-            }
-            None => decoded.push('\\'),
-        }
-    }
-    decoded
 }
 
 fn enum_text<T: Serialize>(value: &T) -> Result<String, AppError> {
@@ -101,6 +56,33 @@ fn parse_enum<T: for<'de> Deserialize<'de>>(value: &str, field: &str) -> Result<
         .map_err(|_| AppError::Tsv(format!("Unsupported {field} value: {value}")))
 }
 
+/// Blank review labels (as in subtitle-seeded worksheet rows) import as unset.
+fn parse_optional_enum<T: for<'de> Deserialize<'de>>(
+    value: &str,
+    field: &str,
+) -> Result<Option<T>, AppError> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    parse_enum(value, field).map(Some)
+}
+
+fn optional_enum_text<T: Serialize>(value: &Option<T>) -> Result<String, AppError> {
+    value.as_ref().map_or_else(|| Ok(String::new()), enum_text)
+}
+
+/// Yamabiko spells the top level `intelligible`; projects keep `highly_intelligible`.
+/// Import needs no counterpart: the model's serde alias accepts both spellings.
+fn intelligibility_text(value: Option<&Intelligibility>) -> &'static str {
+    match value {
+        None => "",
+        Some(Intelligibility::HighlyIntelligible) => "intelligible",
+        Some(Intelligibility::PartiallyIntelligible) => "partially_intelligible",
+        Some(Intelligibility::Unintelligible) => "unintelligible",
+        Some(Intelligibility::NotApplicable) => "not_applicable",
+    }
+}
+
 fn seconds_to_ms(value: &str, field: &str) -> Result<u64, AppError> {
     let seconds: f64 = value
         .parse()
@@ -110,6 +92,16 @@ fn seconds_to_ms(value: &str, field: &str) -> Result<u64, AppError> {
         return Err(AppError::Tsv(format!("Invalid {field}: {value}")));
     }
     Ok(milliseconds.round() as u64)
+}
+
+/// Exactly three decimals, formatted from integer milliseconds.
+fn ms_to_seconds(milliseconds: u64) -> String {
+    format!("{}.{:03}", milliseconds / 1000, milliseconds % 1000)
+}
+
+/// Worksheet fields must stay on one physical row, so each line break becomes a space.
+fn single_line(value: &str) -> String {
+    value.replace("\r\n", " ").replace(['\r', '\n'], " ")
 }
 
 fn label_for_id(
@@ -127,9 +119,9 @@ fn label_for_id(
             "{field} label must not be empty or whitespace-only"
         )));
     }
-    if label.contains('\t') {
+    if label.contains(['\t', '\r', '\n']) {
         return Err(AppError::Tsv(format!(
-            "{field} label contains a tab: {label}"
+            "{field} label contains a tab or line break: {label}"
         )));
     }
     Ok(label)
@@ -141,6 +133,8 @@ fn append_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
+/// Writes Yamabiko's annotation worksheet: the fixed header, `\n`-terminated rows,
+/// UTF-8 without a BOM, and no quoting, so every field is written verbatim.
 pub fn export_tsv(project: &Project) -> Result<String, AppError> {
     crate::persistence::validate_schema_version(project)?;
 
@@ -153,14 +147,8 @@ pub fn export_tsv(project: &Project) -> Result<String, AppError> {
         )
     });
 
-    let mut writer = csv::WriterBuilder::new()
-        .has_headers(false)
-        .delimiter(b'\t')
-        .terminator(csv::Terminator::Any(b'\n'))
-        .from_writer(vec![]);
-    writer
-        .write_record(HEADER)
-        .map_err(|error| AppError::Tsv(error.to_string()))?;
+    let mut text = HEADER.join("\t");
+    text.push('\n');
 
     for annotation in annotations {
         if annotation.end_ms <= annotation.start_ms
@@ -188,6 +176,7 @@ pub fn export_tsv(project: &Project) -> Result<String, AppError> {
                 }
                 label
             }
+            None if annotation.event_type == EventType::Speech => String::new(),
             None => "none".into(),
         };
 
@@ -202,32 +191,23 @@ pub fn export_tsv(project: &Project) -> Result<String, AppError> {
             acoustic_tags.push(label);
         }
 
-        writer
-            .serialize(TsvRow {
-                start_seconds: format!("{:.3}", annotation.start_ms as f64 / 1000.0),
-                end_seconds: format!("{:.3}", annotation.end_ms as f64 / 1000.0),
-                event_type: enum_text(&annotation.event_type)?,
-                transcription: encode_multiline(
-                    &annotation.transcription,
-                    project.export_settings.multiline_policy.clone(),
-                ),
-                intelligibility: enum_text(&annotation.intelligibility)?,
-                speaker,
-                overlap: enum_text(&annotation.overlap)?,
-                confidence: enum_text(&annotation.confidence)?,
-                acoustic_tags: acoustic_tags.join(";"),
-                notes: encode_multiline(
-                    &annotation.notes,
-                    project.export_settings.multiline_policy.clone(),
-                ),
-            })
-            .map_err(|error| AppError::Tsv(error.to_string()))?;
+        let fields = [
+            ms_to_seconds(annotation.start_ms),
+            ms_to_seconds(annotation.end_ms),
+            enum_text(&annotation.event_type)?,
+            single_line(&annotation.transcription),
+            intelligibility_text(annotation.intelligibility.as_ref()).to_owned(),
+            speaker,
+            optional_enum_text(&annotation.overlap)?,
+            optional_enum_text(&annotation.confidence)?,
+            acoustic_tags.join(";"),
+            single_line(&annotation.notes),
+        ];
+        text.push_str(&fields.join("\t"));
+        text.push('\n');
     }
 
-    let bytes = writer
-        .into_inner()
-        .map_err(|error| AppError::Tsv(error.to_string()))?;
-    String::from_utf8(bytes).map_err(|error| AppError::Tsv(error.to_string()))
+    Ok(text)
 }
 
 pub fn write_tsv_to_path(path: &Path, project: &Project) -> Result<(), AppError> {
@@ -238,74 +218,97 @@ pub fn write_tsv_to_path(path: &Path, project: &Project) -> Result<(), AppError>
     Ok(())
 }
 
-pub fn parse_tsv(text: &str, multiline_policy: MultilinePolicy) -> Result<ImportedTsv, AppError> {
+fn header_error() -> AppError {
+    AppError::Tsv(
+        "Expected the ten Yamabiko worksheet columns, with japanese (or legacy transcription) in column four"
+            .into(),
+    )
+}
+
+fn is_worksheet_header(record: &csv::StringRecord) -> bool {
+    record.len() == HEADER.len()
+        && record
+            .iter()
+            .zip(HEADER)
+            .enumerate()
+            .all(|(index, (name, expected))| {
+                name == expected || (index == TEXT_COLUMN_INDEX && name == LEGACY_TEXT_COLUMN)
+            })
+}
+
+/// Tokenizes a worksheet the way Yamabiko's `parse_annotation_worksheet` does: an
+/// optional UTF-8 BOM, tab-delimited rows, quoting disabled, text taken verbatim,
+/// and rows whose fields are all blank skipped.
+pub fn parse_tsv(text: &str) -> Result<ImportedTsv, AppError> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    // The csv reader skips blank lines, but the header must be the first physical row.
+    if text.starts_with(['\r', '\n']) {
+        return Err(header_error());
+    }
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(b'\t')
-        .flexible(false)
+        .quoting(false)
+        .has_headers(false)
+        .flexible(true)
         .from_reader(text.as_bytes());
-    let headers = reader
-        .headers()
-        .map_err(|error| AppError::Tsv(error.to_string()))?
-        .clone();
-    let valid_headers = headers.len() == HEADER.len()
-        && headers
-            .iter()
-            .enumerate()
-            .all(|(index, name)| name == HEADER[index] || (index == 3 && name == "japanese"));
-    if !valid_headers {
-        return Err(AppError::Tsv(
-            "Expected the ten portable columns, with transcription or japanese in column four"
-                .into(),
-        ));
+    let mut record = csv::StringRecord::new();
+    let has_header = reader
+        .read_record(&mut record)
+        .map_err(|error| AppError::Tsv(error.to_string()))?;
+    if !has_header || !is_worksheet_header(&record) {
+        return Err(header_error());
     }
 
     let mut annotations = vec![];
     let mut speakers = vec![];
     let mut acoustic_tags = vec![];
-    for row in reader.deserialize::<TsvRow>() {
-        let row = row.map_err(|error| AppError::Tsv(error.to_string()))?;
-        let start_ms = seconds_to_ms(&row.start_seconds, "start_seconds")?;
-        let end_ms = seconds_to_ms(&row.end_seconds, "end_seconds")?;
+    while reader
+        .read_record(&mut record)
+        .map_err(|error| AppError::Tsv(error.to_string()))?
+    {
+        // A spreadsheet may save trailing rows whose fields are all empty.
+        if record.iter().all(|field| field.trim().is_empty()) {
+            continue;
+        }
+        if record.len() != HEADER.len() {
+            return Err(AppError::Tsv(
+                "Each worksheet row must contain exactly ten columns".into(),
+            ));
+        }
+        let mut fields = record.iter();
+        let [start_seconds, end_seconds, event_type, transcription, intelligibility, speaker, overlap, confidence, tags, notes]: [&str; 10] =
+            std::array::from_fn(|_| fields.next().unwrap_or_default());
+
+        let start_ms = seconds_to_ms(start_seconds, "start_seconds")?;
+        let end_ms = seconds_to_ms(end_seconds, "end_seconds")?;
         if end_ms <= start_ms {
             return Err(AppError::Tsv(
                 "end_seconds must be later than start_seconds".into(),
             ));
         }
-        if row.transcription.contains('\t') || row.notes.contains('\t') {
-            return Err(AppError::Tsv("Text fields cannot contain tabs".into()));
-        }
 
-        let event_type: EventType = parse_enum(&row.event_type, "event_type")?;
-        let speaker = if row.speaker == "none" {
+        let event_type: EventType = parse_enum(event_type, "event_type")?;
+        let speaker = if speaker == "none" {
             if event_type != EventType::NonSpeech {
                 return Err(AppError::Tsv(
                     "The reserved speaker none is only valid for non_speech annotations".into(),
                 ));
             }
             None
+        } else if speaker.trim().is_empty() {
+            None
         } else {
-            if row.speaker.trim().is_empty() || row.speaker.contains('\t') {
-                return Err(AppError::Tsv(
-                    "Speaker labels must be non-empty and tab-free".into(),
-                ));
-            }
-            append_unique(&mut speakers, row.speaker.clone());
-            Some(row.speaker)
+            append_unique(&mut speakers, speaker.to_owned());
+            Some(speaker.to_owned())
         };
-        let row_tags = if row.acoustic_tags.is_empty() {
+        let row_tags = if tags.is_empty() {
             vec![]
         } else {
-            row.acoustic_tags
-                .split(';')
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
+            tags.split(';').map(str::to_owned).collect::<Vec<_>>()
         };
-        if row_tags
-            .iter()
-            .any(|tag| tag.trim().is_empty() || tag.contains('\t'))
-        {
+        if row_tags.iter().any(|tag| tag.trim().is_empty()) {
             return Err(AppError::Tsv(
-                "Acoustic tag labels must be non-empty, non-whitespace, and tab-free".into(),
+                "Acoustic tag labels must be non-empty and non-whitespace".into(),
             ));
         }
         for tag in &row_tags {
@@ -316,13 +319,13 @@ pub fn parse_tsv(text: &str, multiline_policy: MultilinePolicy) -> Result<Import
             start_ms,
             end_ms,
             event_type,
-            transcription: decode_multiline(&row.transcription, multiline_policy.clone()),
-            intelligibility: parse_enum(&row.intelligibility, "intelligibility")?,
+            transcription: transcription.to_owned(),
+            intelligibility: parse_optional_enum(intelligibility, "intelligibility")?,
             speaker,
-            overlap: parse_enum(&row.overlap, "overlap")?,
-            confidence: parse_enum(&row.confidence, "confidence")?,
+            overlap: parse_optional_enum(overlap, "overlap")?,
+            confidence: parse_optional_enum(confidence, "confidence")?,
             acoustic_tags: row_tags,
-            notes: decode_multiline(&row.notes, multiline_policy.clone()),
+            notes: notes.to_owned(),
         });
     }
 
@@ -337,52 +340,132 @@ pub fn parse_tsv(text: &str, multiline_policy: MultilinePolicy) -> Result<Import
 mod tests {
     use super::*;
 
+    const HEADER_LINE: &str = "start_seconds\tend_seconds\tevent_type\tjapanese\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n";
+    const LEGACY_HEADER_LINE: &str = "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n";
+
     #[test]
-    fn exports_the_portable_header_and_three_decimal_times() {
+    fn exports_the_yamabiko_header_and_integer_millisecond_times() {
+        let mut project = Project::fixture("a.wav");
+        project.audio_identity.duration_ms = 3_000_000;
+        project.annotations = vec![
+            annotation("a1", 842, 2115, "1", Some("s1"), vec![]),
+            annotation("a2", 5, 70, "2", Some("s1"), vec![]),
+            annotation("a3", 2_999_000, 2_999_999, "3", Some("s1"), vec![]),
+        ];
+
+        let text = export_tsv(&project).unwrap();
+        let times = text
+            .lines()
+            .skip(1)
+            .map(|line| line.split('\t').take(2).collect::<Vec<_>>().join("-"))
+            .collect::<Vec<_>>();
+
+        assert!(text.starts_with(HEADER_LINE));
+        assert_eq!(times, ["0.005-0.070", "0.842-2.115", "2999.000-2999.999"]);
+    }
+
+    #[test]
+    fn exports_exact_unquoted_worksheet_rows() {
         let mut project = Project::fixture("a.wav");
         project.audio_identity.duration_ms = 3_000;
-        project.annotations.push(Annotation {
-            id: "a1".into(),
-            start_ms: 842,
-            end_ms: 2115,
-            event_type: EventType::Speech,
-            transcription: "こんにちは".into(),
-            intelligibility: Intelligibility::HighlyIntelligible,
-            speaker_id: Some("s1".into()),
-            overlap: Overlap::None,
-            confidence: Confidence::High,
-            acoustic_tag_ids: vec![],
-            notes: String::new(),
-            created_at: "1".into(),
-            updated_at: "1".into(),
-        });
+        project.acoustic_tags = vec![LabelDefinition {
+            id: "tag1".into(),
+            label: "breath".into(),
+        }];
+        let mut row = annotation("a1", 842, 2115, "1", Some("s1"), vec!["tag1"]);
+        row.transcription = "\"もう一度\"\nお願いします".into();
+        row.notes = "clipped to \"sh\"; breath".into();
+        project.annotations = vec![row];
 
         let text = export_tsv(&project).unwrap();
 
-        assert!(text.starts_with(
-            "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n"
-        ));
-        assert!(text.contains("0.842\t2.115\tspeech\tこんにちは"));
+        assert_eq!(
+            text,
+            format!(
+                "{HEADER_LINE}0.842\t2.115\tspeech\t\"もう一度\" お願いします\tintelligible\tspeaker_1\tnone\thigh\tbreath\tclipped to \"sh\"; breath\n"
+            )
+        );
+        let imported = parse_tsv(&text).unwrap();
+        assert_eq!(
+            imported.annotations[0].transcription,
+            "\"もう一度\" お願いします"
+        );
+        assert_eq!(imported.annotations[0].notes, "clipped to \"sh\"; breath");
+    }
+
+    #[test]
+    fn export_flattens_every_line_ending_to_one_space() {
+        let mut project = Project::fixture("a.wav");
+        project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
+        project.annotations[0].transcription = "first\r\nsecond\rthird\nfourth".into();
+        project.annotations[0].notes = "note one\r\nnote two\n\nnote three".into();
+
+        let text = export_tsv(&project).unwrap();
+        let imported = parse_tsv(&text).unwrap();
+
+        assert_eq!(text.lines().count(), 2);
+        assert!(!text.contains('\r'));
+        assert_eq!(
+            imported.annotations[0].transcription,
+            "first second third fourth"
+        );
+        assert_eq!(
+            imported.annotations[0].notes,
+            "note one note two  note three"
+        );
     }
 
     #[test]
     fn imports_japanese_as_transcription_and_discovers_labels() {
-        let text = "start_seconds\tend_seconds\tevent_type\tjapanese\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.100\t0.250\tspeech\tこんにちは\tintelligible\tspeaker_7\tnone\thigh\tquiet_dialogue;breath\t\n";
+        let text = format!(
+            "{HEADER_LINE}0.100\t0.250\tspeech\tこんにちは\tintelligible\tspeaker_7\tnone\thigh\tquiet_dialogue;breath\t\n"
+        );
 
-        let imported = parse_tsv(text, MultilinePolicy::Escape).unwrap();
+        let imported = parse_tsv(&text).unwrap();
 
         assert_eq!(imported.annotations[0].transcription, "こんにちは");
+        assert_eq!(
+            imported.annotations[0].intelligibility,
+            Some(Intelligibility::HighlyIntelligible)
+        );
         assert_eq!(imported.speakers, vec!["speaker_7"]);
         assert_eq!(imported.acoustic_tags, vec!["quiet_dialogue", "breath"]);
     }
 
     #[test]
-    fn legacy_intelligibility_tsv_import_reexports_canonically() {
-        let text = "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.100\t0.250\tspeech\tlegacy\tintelligible\tspeaker_1\tnone\thigh\t\t\n";
-        let imported = parse_tsv(text, MultilinePolicy::Escape).unwrap();
+    fn imports_verbatim_with_quoting_disabled_bom_stripped_and_blank_rows_skipped() {
+        let text = format!(
+            "\u{feff}{}{}{}{}{}{}",
+            HEADER_LINE.replace('\n', "\r\n"),
+            "0.100\t0.250\tspeech\t\"quoted start\tintelligible\tspeaker_1\tnone\thigh\t\tclipped to \"sh\"; breath\r\n",
+            "\t\t\t\t\t\t\t\t\t\r\n",
+            "0.300\t0.400\tspeech\tfirst\\nsecond \\\\ end\tpartially_intelligible\tspeaker_1\tnone\tmedium\t\t\"\"\r\n",
+            " \t\t \r\n",
+            "\t\t\n",
+        );
+
+        let imported = parse_tsv(&text).unwrap();
+
+        assert_eq!(imported.annotations.len(), 2);
+        assert_eq!(imported.annotations[0].transcription, "\"quoted start");
+        assert_eq!(imported.annotations[0].notes, "clipped to \"sh\"; breath");
+        assert_eq!(
+            imported.annotations[1].transcription,
+            "first\\nsecond \\\\ end"
+        );
+        assert_eq!(imported.annotations[1].notes, "\"\"");
+    }
+
+    #[test]
+    fn legacy_transcription_header_and_highly_intelligible_reexport_as_yamabiko() {
+        let text = format!(
+            "{LEGACY_HEADER_LINE}0.100\t0.250\tspeech\tlegacy\thighly_intelligible\tspeaker_1\tnone\thigh\t\t\n"
+        );
+        let imported = parse_tsv(&text).unwrap();
+        assert_eq!(imported.annotations[0].transcription, "legacy");
         assert_eq!(
             imported.annotations[0].intelligibility,
-            Intelligibility::HighlyIntelligible
+            Some(Intelligibility::HighlyIntelligible)
         );
 
         let mut project = Project::fixture("a.wav");
@@ -402,37 +485,43 @@ mod tests {
             updated_at: "1".into(),
         }];
 
-        let exported = export_tsv(&project).unwrap();
-        assert!(exported.contains("\thighly_intelligible\t"));
-        assert!(!exported.contains("\tintelligible\t"));
-    }
-
-    #[test]
-    fn escape_policy_round_trips_backslashes_and_newlines() {
-        let source = "first\\path\nsecond";
-        let encoded = encode_multiline(source, MultilinePolicy::Escape);
-
-        assert_eq!(decode_multiline(&encoded, MultilinePolicy::Escape), source);
-    }
-
-    #[test]
-    fn space_policy_normalizes_every_line_ending_through_export_and_parse() {
-        let mut project = Project::fixture("a.wav");
-        project.export_settings.multiline_policy = MultilinePolicy::Space;
-        project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
-        project.annotations[0].transcription = "first\r\nsecond\rthird\nfourth".into();
-        project.annotations[0].notes = "note one\r\nnote two".into();
-
-        let text = export_tsv(&project).unwrap();
-        let imported = parse_tsv(&text, MultilinePolicy::Space).unwrap();
-
-        assert!(!text.contains('\r'));
-        assert!(text.contains("first second third fourth"));
         assert_eq!(
-            imported.annotations[0].transcription,
-            "first second third fourth"
+            export_tsv(&project).unwrap(),
+            format!(
+                "{HEADER_LINE}0.100\t0.250\tspeech\tlegacy\tintelligible\tspeaker_1\tnone\thigh\t\t\n"
+            )
         );
-        assert_eq!(imported.annotations[0].notes, "note one note two");
+    }
+
+    #[test]
+    fn blank_review_labels_import_as_unset_and_export_blank() {
+        let text = format!("{HEADER_LINE}0.100\t0.250\tspeech\t~♪\t\t\t\t\t\t\n");
+        let imported = parse_tsv(&text).unwrap();
+        let row = &imported.annotations[0];
+        assert_eq!(row.intelligibility, None);
+        assert_eq!(row.speaker, None);
+        assert_eq!(row.overlap, None);
+        assert_eq!(row.confidence, None);
+        assert!(imported.speakers.is_empty());
+
+        let mut project = Project::fixture("a.wav");
+        let mut unreviewed = annotation("a1", 100, 250, "1", Some("s1"), vec![]);
+        unreviewed.transcription = "~♪".into();
+        unreviewed.intelligibility = None;
+        unreviewed.speaker_id = None;
+        unreviewed.overlap = None;
+        unreviewed.confidence = None;
+        project.annotations = vec![unreviewed];
+
+        let exported = export_tsv(&project).unwrap();
+        assert_eq!(
+            exported.lines().nth(1),
+            Some("0.100\t0.250\tspeech\t~♪\t\t\t\t\t\t")
+        );
+        assert_eq!(
+            parse_tsv(&exported).unwrap().annotations,
+            imported.annotations
+        );
     }
 
     #[test]
@@ -457,28 +546,21 @@ mod tests {
     }
 
     #[test]
-    fn quoted_policy_preserves_physical_multiline_fields() {
-        let mut project = Project::fixture("a.wav");
-        project.audio_identity.duration_ms = 1_000;
-        project.export_settings.multiline_policy = MultilinePolicy::Quoted;
-        project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
-        project.annotations[0].transcription = "first\nsecond".into();
-
-        let text = export_tsv(&project).unwrap();
-        let imported = parse_tsv(&text, MultilinePolicy::Quoted).unwrap();
-
-        assert!(text.contains("\"first\nsecond\""));
-        assert_eq!(imported.annotations[0].transcription, "first\nsecond");
-    }
-
-    #[test]
-    fn rejects_incompatible_headers_boundaries_tabs_and_controlled_values() {
+    fn rejects_incompatible_headers_rows_boundaries_tabs_and_controlled_values() {
+        let row = "0.100\t0.200\tspeech\tword\tintelligible\tspeaker_1\tnone\thigh\t\t\n";
         for text in [
-            "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\n",
-            "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.200\t0.100\tspeech\tword\tintelligible\ts1\tnone\thigh\t\t\n",
-            "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.100\t0.200\tunknown\tword\tintelligible\ts1\tnone\thigh\t\t\n",
+            "start_seconds\tend_seconds\tevent_type\tjapanese\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\n".to_owned(),
+            HEADER_LINE.replace("japanese", "text") + row,
+            HEADER_LINE.replace("notes", "\"notes\"") + row,
+            format!("\n{HEADER_LINE}{row}"),
+            format!("{HEADER_LINE}0.100\t0.200\tspeech\n"),
+            format!("{HEADER_LINE}{}", row.replace('\n', "\textra\n")),
+            format!("{HEADER_LINE}0.200\t0.100\tspeech\tword\tintelligible\tspeaker_1\tnone\thigh\t\t\n"),
+            format!("{HEADER_LINE}0.100\t0.200\tunknown\tword\tintelligible\tspeaker_1\tnone\thigh\t\t\n"),
+            format!("{HEADER_LINE}0.100\t0.200\tspeech\tword\tclear\tspeaker_1\tnone\thigh\t\t\n"),
+            String::new(),
         ] {
-            assert!(parse_tsv(text, MultilinePolicy::Escape).is_err(), "{text}");
+            assert!(parse_tsv(&text).is_err(), "{text:?}");
         }
 
         let mut project = Project::fixture("a.wav");
@@ -488,17 +570,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_blank_speaker_and_acoustic_tag_labels_on_export() {
+    fn rejects_blank_and_multiline_speaker_and_acoustic_tag_labels_on_export() {
         let mut project = Project::fixture("a.wav");
         project.annotations = vec![annotation("a1", 100, 200, "1", Some("s1"), vec![])];
-        for label in ["", "  "] {
+        for label in ["", "  ", "speaker\n1"] {
             project.speakers[0].label = label.into();
             assert!(export_tsv(&project).is_err(), "{label:?}");
         }
 
         project.speakers[0].label = "speaker_1".into();
         project.annotations[0].acoustic_tag_ids = vec!["tag1".into()];
-        for label in ["", "  ", "tag\tname", "tag;name"] {
+        for label in ["", "  ", "tag\tname", "tag;name", "tag\r\nname"] {
             project.acoustic_tags = vec![LabelDefinition {
                 id: "tag1".into(),
                 label: label.into(),
@@ -508,18 +590,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_blank_imported_labels_and_empty_acoustic_tag_segments() {
-        for (speaker, tags) in [
-            ("  ", ""),
-            ("speaker_1", "  "),
-            ("speaker_1", ";tag_a"),
-            ("speaker_1", "tag_a;"),
-            ("speaker_1", "tag_a;;tag_b"),
-        ] {
+    fn rejects_blank_imported_acoustic_tag_segments() {
+        for tags in ["  ", ";tag_a", "tag_a;", "tag_a;;tag_b"] {
             let text = format!(
-                "start_seconds\tend_seconds\tevent_type\ttranscription\tintelligibility\tspeaker\toverlap\tconfidence\tacoustic_tags\tnotes\n0.100\t0.200\tspeech\tword\tintelligible\t{speaker}\tnone\thigh\t{tags}\t\n"
+                "{HEADER_LINE}0.100\t0.200\tspeech\tword\tintelligible\tspeaker_1\tnone\thigh\t{tags}\t\n"
             );
-            assert!(parse_tsv(&text, MultilinePolicy::Escape).is_err(), "{text}");
+            assert!(parse_tsv(&text).is_err(), "{text}");
         }
     }
 
@@ -541,10 +617,10 @@ mod tests {
                 EventType::NonSpeech
             },
             transcription: String::new(),
-            intelligibility: Intelligibility::HighlyIntelligible,
+            intelligibility: Some(Intelligibility::HighlyIntelligible),
             speaker_id: speaker_id.map(str::to_owned),
-            overlap: Overlap::None,
-            confidence: Confidence::High,
+            overlap: Some(Overlap::None),
+            confidence: Some(Confidence::High),
             acoustic_tag_ids: acoustic_tag_ids.into_iter().map(str::to_owned).collect(),
             notes: String::new(),
             created_at: created_at.into(),

@@ -109,30 +109,38 @@
 
 <style>
   .selection-track {
-    background: var(--color-panel);
-    height: 22px;
-    min-width: 0;
     position: relative;
+    height: 14px;
+    min-width: 0;
+    background: var(--color-canvas);
+    touch-action: none;
   }
 
   .selection {
-    background: var(--color-selection-wash);
-    box-shadow: inset 0 1px var(--color-loop-boundary), inset 0 -1px var(--color-loop-boundary);
+    position: absolute;
+    top: 2px;
     bottom: 2px;
     display: grid;
     grid-template-columns: 8px minmax(0, 1fr) 8px;
-    position: absolute;
-    top: 2px;
+    border-radius: 2px;
+    background: var(--color-selection-wash);
+    box-shadow: inset 0 1px var(--color-loop-boundary), inset 0 -1px var(--color-loop-boundary);
   }
 
-  button {
+  .selection button,
+  .selection button:hover:not(:disabled) {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
     background: transparent;
     border: 0;
-    min-width: 0;
-    padding: 0;
+    border-radius: 0;
   }
 
-  .handle { cursor: col-resize; }
-  .body { cursor: grab; }
-  .body:active { cursor: grabbing; }
+  .selection .handle { cursor: col-resize; }
+  .selection .handle:first-child { box-shadow: inset 2px 0 var(--color-loop-boundary); }
+  .selection .handle:last-child { box-shadow: inset -2px 0 var(--color-loop-boundary); }
+  .selection .body { cursor: grab; }
+  .selection .body:active { cursor: grabbing; }
+  .selection button:focus-visible { outline-offset: -2px; }
 </style>

@@ -12,17 +12,19 @@
     type PlaybackSnapshot
   } from './lib/bridge/native';
   import { tauriLifecycle, type CloseRequestEvent, type LifecycleAdapter } from './lib/bridge/lifecycle';
-  import ActiveTextEditor from './lib/components/ActiveTextEditor.svelte';
-  import AnnotationDashboard from './lib/components/AnnotationDashboard.svelte';
-  import AnnotationTable from './lib/components/AnnotationTable.svelte';
-  import ClipToolbar from './lib/components/ClipToolbar.svelte';
+  import AnnotationEditor from './lib/components/AnnotationEditor.svelte';
+  import AnnotationList, { type AnnotationRow } from './lib/components/AnnotationList.svelte';
   import ErrorBanner from './lib/components/ErrorBanner.svelte';
   import SettingsDialog from './lib/components/SettingsDialog.svelte';
+  import ShortcutHelp from './lib/components/ShortcutHelp.svelte';
   import TimelineWorkspace from './lib/components/TimelineWorkspace.svelte';
+  import TopBar from './lib/components/TopBar.svelte';
+  import TransportBar from './lib/components/TransportBar.svelte';
   import { mergeImportedTsv } from './lib/domain/importTsv';
   import { createProject } from './lib/domain/project';
-  import type { AnnotationDraft, AudioIdentity, MultilinePolicy, Project, Selection } from './lib/domain/types';
-  import { normalizeIntelligibility, validateDraft } from './lib/domain/validation';
+  import { formatTime } from './lib/domain/time';
+  import type { Annotation, AnnotationDraft, AudioIdentity, Project, Selection } from './lib/domain/types';
+  import { normalizeIntelligibility, validateDraft, worksheetErrors } from './lib/domain/validation';
   import { formatUnknownError } from './lib/errors';
   import { AudioSession } from './lib/state/audioSession';
   import { ProjectStore } from './lib/state/projectStore';
@@ -38,7 +40,7 @@
     bridge?: NativeBridge;
     pickers?: PickerSet;
     lifecycle?: LifecycleAdapter;
-    confirmRecovery?: (message: string) => boolean | Promise<boolean>;
+    confirm?: (message: string) => boolean | Promise<boolean>;
     id?: () => string;
     now?: () => string;
   }
@@ -53,12 +55,12 @@
     bridge = tauriBridge,
     pickers = productionPickers,
     lifecycle = tauriLifecycle,
-    confirmRecovery = (message) => window.confirm(message),
+    confirm = (message) => window.confirm(message),
     id = () => crypto.randomUUID(),
     now = () => new Date().toISOString()
   }: Props = $props();
 
-  const projectStore = new ProjectStore({ saveProject: (value) => bridge.saveProject(value) }, () => id());
+  const projectStore = new ProjectStore({ saveProject: (value) => bridge.saveProject(value) }, () => id(), () => now());
   const audioSession = new AudioSession({
     audioPlay: () => bridge.audioPlay(),
     audioPause: () => bridge.audioPause(),
@@ -84,11 +86,12 @@
   let tablePreviewAnnotationId = $state<string | null>(null);
   let waveformPreviewAnnotationId = $state<string | null>(null);
   let previewAnnotationId = $state<string | null>(null);
-  let dashboardHandle = $state<AnnotationDashboard | null>(null);
-  let settingsBusy = $state(false);
+  let editorHandle = $state<AnnotationEditor | null>(null);
   let settingsOpen = $state(false);
+  let shortcutsOpen = $state(false);
+  let reveal = $state<{ startMs: number; endMs: number; key: number } | null>(null);
+  let undoable = $state<Annotation | null>(null);
   let palette = $state<PaletteId>(loadPalette(getBrowserStorage()));
-  let multilinePolicyMutation: Promise<boolean> | null = null;
   let closePromise: Promise<void> | null = null;
   let cleanupRequested = false;
   let analysisUnlisten: (() => void) | null = null;
@@ -106,28 +109,37 @@
 
   let project = $derived($projectStore.project);
   let playback = $derived($audioSession);
-  let waveformAnnotations = $derived(
-    project?.annotations.map(({ id, startMs, endMs }) => ({ id, startMs, endMs })) ?? []
-  );
+  let orderedAnnotations = $derived(project
+    ? [...project.annotations].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs)
+    : []);
+  let annotationRows = $derived.by((): AnnotationRow[] => project ? orderedAnnotations.map((annotation) => ({
+    id: annotation.id,
+    startMs: annotation.startMs,
+    endMs: annotation.endMs,
+    speakerId: annotation.speakerId,
+    transcription: annotation.transcription,
+    speaker: project.speakers.find((speaker) => speaker.id === annotation.speakerId)?.label
+      ?? (annotation.eventType === 'speech' ? 'Not set' : 'Non-speech'),
+    tags: annotation.acousticTagIds.flatMap((tagId) => {
+      const tag = project.acousticTags.find((candidate) => candidate.id === tagId);
+      return tag ? [{ id: tag.id, label: tag.label }] : [];
+    }),
+    intelligibility: annotation.intelligibility,
+    problems: Object.values(worksheetErrors(annotation, project)).filter((message): message is string => Boolean(message))
+  })) : []);
+  let waveformAnnotations = $derived(annotationRows.map(({ id, startMs, endMs, speaker, speakerId }) => ({
+    id, startMs, endMs, label: speakerId ? speaker : ''
+  })));
+  let activeNumber = $derived.by(() => {
+    const index = orderedAnnotations.findIndex((annotation) => annotation.id === project?.activeAnnotationId);
+    return index < 0 ? null : index + 1;
+  });
   let filename = $derived(project ? basename(project.audioIdentity.canonicalPath) : null);
   let analysisPercent = $derived.by(() => {
     if (!analysisProgress) return null;
     if (!Number.isFinite(analysisProgress.durationMs) || analysisProgress.durationMs <= 0) return 0;
     return Math.min(100, Math.max(0, Math.round(analysisProgress.processedMs / analysisProgress.durationMs * 100)));
   });
-  let tableAnnotations = $derived.by(() => project ? project.annotations.map((annotation) => ({
-    id: annotation.id,
-    startMs: annotation.startMs,
-    endMs: annotation.endMs,
-    speakerId: annotation.speakerId,
-    transcription: annotation.transcription,
-    speaker: project.speakers.find((speaker) => speaker.id === annotation.speakerId)?.label ?? 'none',
-    tags: annotation.acousticTagIds.flatMap((tagId) => {
-      const tag = project.acousticTags.find((candidate) => candidate.id === tagId);
-      return tag ? [{ id: tag.id, label: tag.label }] : [];
-    }),
-    intelligibility: annotation.intelligibility
-  })) : []);
   let canLoop = $derived(Boolean(project && (project.activeSelection || (
     Number.isInteger(project.draft.startMs) && Number.isInteger(project.draft.endMs)
     && project.draft.startMs >= 0 && project.draft.endMs > project.draft.startMs
@@ -348,12 +360,14 @@
     closeUnlisten = null;
     if (windowListenerInstalled) {
       window.removeEventListener('keydown', globalKeydown);
+      window.removeEventListener('keyup', globalKeyup);
       windowListenerInstalled = false;
     }
   }
 
   onMount(() => {
     window.addEventListener('keydown', globalKeydown);
+    window.addEventListener('keyup', globalKeyup);
     windowListenerInstalled = true;
     void Promise.resolve().then(() => bridge.onAnalysisProgress((progress) => {
       if (activeAnalysisGeneration !== null && isCurrent(activeAnalysisGeneration)) analysisProgress = progress;
@@ -442,10 +456,6 @@
       || value.draft.transcription !== '' || value.draft.notes !== '' || value.activeSelection !== null;
     if (!draftStarted) return value;
     const draftErrors = validateDraft(value.draft, value);
-    if (draftErrors.transcription === 'Transcription is required for intelligible speech'
-      && !value.draft.transcription.includes('\t')) {
-      delete draftErrors.transcription;
-    }
     if (Object.keys(draftErrors).length) {
       throw new Error(`The recovered draft does not fit the ${changed ? 'changed audio duration' : 'audio project'}`);
     }
@@ -492,7 +502,7 @@
       const changed = Boolean(restored && (
         restored.audioIdentity.size !== identity.size || restored.audioIdentity.modifiedMs !== identity.modifiedMs
       ));
-      if (changed && !await confirmRecovery('The source audio changed. Reuse its existing annotations and regenerate the waveform?')) return;
+      if (changed && !await confirm('The source audio changed. Reuse its existing annotations and regenerate the waveform?')) return;
       if (!isCurrent(generation)) return;
       const nextProject = normalizeRecoveredProject(
         restored ? { ...restored, audioIdentity: identity } : createProject(identity),
@@ -520,6 +530,7 @@
         () => {
           projectStore.open(projectToPublish);
           peaks = nextPeaks;
+          undoable = null;
         }
       );
       if (!openedIdentity) return;
@@ -548,25 +559,31 @@
     }
   }
 
+  function reviewCount(value: Project): number {
+    return value.annotations.filter((annotation) => Object.keys(worksheetErrors(annotation, value)).length).length;
+  }
+
+  function reviewStatus(): string {
+    const current = get(projectStore).project;
+    const count = current ? reviewCount(current) : 0;
+    return count ? `; ${count} need${count === 1 ? 's' : ''} review for Yamabiko` : '';
+  }
+
   async function importTsv(): Promise<void> {
     if (transitionBusy || closePromise) return;
     try {
-      if (!await waitForMultilinePolicy()) return;
-      if (transitionBusy || closePromise || !get(projectStore).project) return;
+      if (!get(projectStore).project) return;
       const path = await pickers.tsv();
       if (!path) return;
-      if (!await waitForMultilinePolicy()) return;
-      if (transitionBusy || closePromise) return;
-      const current = get(projectStore).project;
-      if (!current) return;
-      const imported = await bridge.readTsv(path, current.exportSettings.multilinePolicy);
+      if (transitionBusy || closePromise || !get(projectStore).project) return;
+      const imported = await bridge.readTsv(path);
       if (transitionBusy || closePromise) return;
       const succeeded = await projectStore.mutateProject((value) => mergeImportedTsv(value, imported, id, now()));
       if (!succeeded) {
         persistentError = get(projectStore).saveError ?? 'The TSV import could not be saved';
         return;
       }
-      status = `Imported ${imported.annotations.length} annotation${imported.annotations.length === 1 ? '' : 's'}`;
+      status = `Imported ${imported.annotations.length} annotation${imported.annotations.length === 1 ? '' : 's'}${reviewStatus()}`;
     } catch (error) {
       persistentError = formatUnknownError(error);
     }
@@ -575,55 +592,23 @@
   async function exportTsv(): Promise<void> {
     if (transitionBusy || closePromise) return;
     try {
-      if (!await waitForMultilinePolicy()) return;
-      if (transitionBusy || closePromise) return;
       let current = get(projectStore).project;
       if (!current) return;
+      const pending = reviewCount(current);
+      if (pending && !await confirm(
+        `${pending} annotation${pending === 1 ? '' : 's'} still need${pending === 1 ? 's' : ''} review, so Yamabiko will reject this file. Export anyway?`
+      )) return;
       const defaultPath = `${basename(current.audioIdentity.canonicalPath).replace(/\.[^.]+$/, '')}.tsv`;
       const path = await pickers.exportTsv(defaultPath);
       if (!path) return;
-      if (!await waitForMultilinePolicy()) return;
       if (transitionBusy || closePromise) return;
       current = get(projectStore).project;
       if (!current) return;
       await bridge.writeTsv(path, current);
-      status = `Exported ${current.annotations.length} annotation${current.annotations.length === 1 ? '' : 's'}`;
+      status = `Exported ${current.annotations.length} annotation${current.annotations.length === 1 ? '' : 's'}${reviewStatus()}`;
     } catch (error) {
       persistentError = formatUnknownError(error);
     }
-  }
-
-  async function toggleFormat(): Promise<void> {
-    if (transitionBusy || closePromise) return;
-    const succeeded = await projectStore.mutateProject((value) => ({
-      ...value,
-      displayFormat: value.displayFormat === 'seconds' ? 'clock' : 'seconds'
-    }));
-    if (!succeeded) persistentError = get(projectStore).saveError ?? 'The display setting could not be saved';
-  }
-
-  async function setMultilinePolicy(multilinePolicy: MultilinePolicy): Promise<void> {
-    if (transitionBusy || closePromise || multilinePolicyMutation) return;
-    const request = projectStore.mutateProject((value) => ({
-      ...value,
-      exportSettings: { ...value.exportSettings, multilinePolicy }
-    }));
-    multilinePolicyMutation = request;
-    settingsBusy = true;
-    try {
-      const succeeded = await request;
-      if (!succeeded) persistentError = get(projectStore).saveError ?? 'The multiline export setting could not be saved';
-    } finally {
-      if (multilinePolicyMutation === request) {
-        multilinePolicyMutation = null;
-        settingsBusy = false;
-      }
-    }
-  }
-
-  async function waitForMultilinePolicy(): Promise<boolean> {
-    const pending = multilinePolicyMutation;
-    return pending ? pending : true;
   }
 
   function changePalette(value: PaletteId): void {
@@ -631,23 +616,129 @@
     persistPalette(value);
   }
 
+  function clampSelection(selection: Selection, durationMs: number): Selection {
+    const startMs = Math.min(durationMs - 1, Math.max(0, Math.round(selection.startMs)));
+    return { startMs, endMs: Math.min(durationMs, Math.max(startMs + 1, Math.round(selection.endMs))) };
+  }
+
+  /** Adjusts the range of whatever is open in the editor (autosaved for a saved annotation). */
   function setSelection(selection: Selection): void {
     if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
     if (!current || current.audioIdentity.durationMs < 1) return;
-    const startMs = Math.min(current.audioIdentity.durationMs - 1, Math.max(0, Math.round(selection.startMs)));
-    const endMs = Math.min(current.audioIdentity.durationMs, Math.max(startMs + 1, Math.round(selection.endMs)));
-    projectStore.setSelection({ startMs, endMs });
+    projectStore.setSelection(clampSelection(selection, current.audioIdentity.durationMs));
+  }
+
+  /** A range dragged out on the waveform starts a new, unsaved annotation. */
+  function createSelection(selection: Selection): void {
+    if (transitionBusy || closePromise) return;
+    const current = get(projectStore).project;
+    if (!current || current.audioIdentity.durationMs < 1) return;
+    const range = clampSelection(selection, current.audioIdentity.durationMs);
+    projectStore.beginDraft(range);
+    seekTo(range.startMs);
+  }
+
+  function seekTo(milliseconds: number): void {
+    if (transitionBusy || closePromise) return;
+    const current = get(projectStore).project;
+    if (!current) return;
+    void reportPromise(audioSession.seek(Math.min(current.audioIdentity.durationMs, Math.max(0, Math.round(milliseconds)))));
+  }
+
+  function revealRange(range: Selection): void {
+    reveal = { startMs: range.startMs, endMs: range.endMs, key: (reveal?.key ?? 0) + 1 };
+  }
+
+  function activateAnnotation(annotationId: string): void {
+    if (transitionBusy || closePromise) return;
+    const annotation = get(projectStore).project?.annotations.find((item) => item.id === annotationId);
+    if (!annotation) return;
+    projectStore.selectAnnotation(annotationId);
+    revealRange(annotation);
+    seekTo(annotation.startMs);
+  }
+
+  function stepAnnotation(step: 1 | -1): void {
+    const current = get(projectStore).project;
+    if (!current || !orderedAnnotations.length) return;
+    const index = orderedAnnotations.findIndex((annotation) => annotation.id === current.activeAnnotationId);
+    const position = get(audioSession).positionMs;
+    const next = index >= 0
+      ? orderedAnnotations[index + step]
+      : step > 0
+        ? orderedAnnotations.find((annotation) => annotation.startMs >= position)
+        : orderedAnnotations.filter((annotation) => annotation.startMs < position).at(-1);
+    if (next) activateAnnotation(next.id);
+  }
+
+  function stepReview(direction: 1 | -1): void {
+    const current = get(projectStore).project;
+    if (!current) return;
+    const flagged = annotationRows.filter((row) => row.problems.length);
+    if (!flagged.length) {
+      status = 'Every annotation is ready for Yamabiko';
+      return;
+    }
+    const index = annotationRows.findIndex((row) => row.id === current.activeAnnotationId);
+    const position = get(audioSession).positionMs;
+    const after = index >= 0 ? annotationRows.slice(index + 1) : annotationRows.filter((row) => row.startMs >= position);
+    const before = index >= 0 ? annotationRows.slice(0, index) : annotationRows.filter((row) => row.startMs < position);
+    const target = direction > 0
+      ? after.find((row) => row.problems.length) ?? flagged[0]
+      : before.filter((row) => row.problems.length).at(-1) ?? flagged.at(-1);
+    if (target) activateAnnotation(target.id);
+  }
+
+  function setBoundaryAtPlayhead(kind: 'start' | 'end'): void {
+    if (transitionBusy || closePromise) return;
+    const current = get(projectStore).project;
+    if (!current || current.audioIdentity.durationMs < 1) return;
+    const position = Math.min(current.audioIdentity.durationMs, Math.max(0, get(audioSession).positionMs));
+    const range = current.activeSelection;
+    if (kind === 'start') {
+      const startMs = Math.min(current.audioIdentity.durationMs - 1, position);
+      const endMs = range && range.endMs > startMs ? range.endMs : Math.min(current.audioIdentity.durationMs, startMs + 1_000);
+      setSelection({ startMs, endMs });
+    } else if (range && position > range.startMs) {
+      setSelection({ ...range, endMs: position });
+    } else {
+      status = 'Set the start first (I), then the end (O) after it';
+    }
+  }
+
+  function playRange(): void {
+    const range = get(projectStore).project?.activeSelection;
+    if (range && !transitionBusy && !closePromise) void reportPromise(startPlayback(range.startMs));
+  }
+
+  async function deleteAnnotation(annotationId: string): Promise<void> {
+    if (transitionBusy || closePromise) return;
+    const removed = await projectStore.removeAnnotation(annotationId);
+    if (!removed) {
+      persistentError = get(projectStore).saveError ?? 'The annotation could not be deleted';
+      return;
+    }
+    undoable = removed;
+    status = `Deleted the annotation at ${formatTime(removed.startMs)}`;
+  }
+
+  async function undoDelete(): Promise<void> {
+    const annotation = undoable;
+    if (!annotation || transitionBusy || closePromise) return;
+    undoable = null;
+    if (!await projectStore.restoreAnnotation(annotation)) {
+      persistentError = get(projectStore).saveError ?? 'The annotation could not be restored';
+      return;
+    }
+    status = `Restored the annotation at ${formatTime(annotation.startMs)}`;
+    activateAnnotation(annotation.id);
   }
 
   function previewWaveformAnnotation(annotationId: string, previewing: boolean): void {
     if (transitionBusy) return;
     if (previewing) waveformPreviewAnnotationId = annotationId;
     else if (waveformPreviewAnnotationId === annotationId) waveformPreviewAnnotationId = null;
-  }
-
-  function activateWaveformAnnotation(annotationId: string): void {
-    if (!transitionBusy) projectStore.selectAnnotation(annotationId);
   }
 
   function reportPromise(request: Promise<unknown>): Promise<void> {
@@ -664,20 +755,19 @@
     });
   }
 
-  function startPlayback(): Promise<void> {
+  /** Plays from the playhead, or from `fromMs` when given (Play range). */
+  function startPlayback(fromMs: number | null = null): Promise<void> {
     if (playbackStart) return playbackStart;
     const generation = operationGeneration;
     const transitionEpoch = nativeTransitionEpoch;
-    const activeSelection = get(projectStore).project?.activeSelection;
-    const selection = activeSelection ? { ...activeSelection } : null;
     let request: Promise<void>;
     request = (async () => {
-      if (selection) await audioSession.seek(selection.startMs);
+      if (fromMs !== null) await audioSession.seek(fromMs);
       const state = get(audioSession).state;
       if (!isCurrent(generation) || transitionEpoch !== nativeTransitionEpoch
         || transitionBusy || closePromise
         || (state !== 'paused' && state !== 'playing')) return;
-      await audioSession.play();
+      if (state !== 'playing') await audioSession.play();
     })().finally(() => {
       if (playbackStart === request) playbackStart = null;
     });
@@ -706,47 +796,68 @@
     queueLoopCommand(next);
   }
 
+  function isTyping(target: Element | null): boolean {
+    return Boolean(target?.closest('input:not([type="range"]), textarea, select, [contenteditable]:not([contenteditable="false"])'));
+  }
+
+  function globalKeyup(event: KeyboardEvent): void {
+    // Space is play/pause everywhere outside text fields, so it must not also press the focused button.
+    if (event.code === 'Space' && !isTyping(event.target instanceof Element ? event.target : null)) event.preventDefault();
+  }
+
   function globalKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) return;
     const target = event.target instanceof Element ? event.target : null;
-    const editable = target?.closest('[contenteditable]');
-    const editableValue = editable?.getAttribute('contenteditable')?.toLowerCase();
-    if (event.isComposing || target?.closest('input, textarea, select')
-      || (editable && editableValue !== 'false')
-      || (target instanceof HTMLElement && target.isContentEditable)) return;
+    if (isTyping(target)) {
+      if (event.key === 'Escape' && target instanceof HTMLElement) target.blur();
+      return;
+    }
+    if (settingsOpen || shortcutsOpen) return;
+    if (event.key === '?') {
+      event.preventDefault();
+      shortcutsOpen = true;
+      return;
+    }
     if (transitionBusy || closePromise) return;
     const current = get(projectStore).project;
     if (!current) return;
-    const snapshot = get(audioSession);
     if (event.code === 'Space') {
       event.preventDefault();
       togglePlay();
       return;
     }
-    if (event.key.toLowerCase() === 'i' && current.audioIdentity.durationMs > 0) {
-      const startMs = Math.min(current.audioIdentity.durationMs - 1, Math.max(0, snapshot.positionMs));
-      const existingEnd = current.activeSelection?.endMs ?? startMs + 1;
-      setSelection({ startMs, endMs: Math.min(current.audioIdentity.durationMs, Math.max(startMs + 1, existingEnd)) });
-      return;
-    }
-    if (event.key.toLowerCase() === 'o' && current.activeSelection) {
-      const endMs = Math.min(current.audioIdentity.durationMs, Math.max(0, snapshot.positionMs));
-      if (endMs > current.activeSelection.startMs) setSelection({ ...current.activeSelection, endMs });
-      return;
-    }
-    if (event.key.toLowerCase() === 'l') {
-      const next = snapshot.loopRange ? null : current.activeSelection;
-      if (next || snapshot.loopRange) {
-        lastLoopSelection = next ? `${next.startMs}:${next.endMs}` : '';
-        queueLoopCommand(next);
+    if (event.ctrlKey || event.metaKey) {
+      if (event.key.toLowerCase() === 'z' && undoable) {
+        event.preventDefault();
+        void undoDelete();
       }
       return;
     }
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault();
-      const magnitude = event.shiftKey ? 1_000 : 50;
-      const delta = event.key === 'ArrowLeft' ? -magnitude : magnitude;
-      const position = Math.min(current.audioIdentity.durationMs, Math.max(0, snapshot.positionMs + delta));
-      void reportPromise(audioSession.seek(position));
+    if (event.altKey) return;
+    const onControl = Boolean(target?.closest('button, a[href], [role="combobox"]'));
+    switch (event.key) {
+      case 'i': case 'I': setBoundaryAtPlayhead('start'); return;
+      case 'o': case 'O': setBoundaryAtPlayhead('end'); return;
+      case 'l': case 'L': toggleLoop(); return;
+      case 'n': case 'N': stepReview(event.shiftKey ? -1 : 1); return;
+      case 'Escape': projectStore.beginDraft(null); return;
+      case 'Delete':
+        if (current.activeAnnotationId) void deleteAnnotation(current.activeAnnotationId);
+        return;
+      case 'Enter':
+        if (onControl) return;
+        event.preventDefault();
+        editorHandle?.focusTranscription();
+        return;
+      case 'ArrowUp': case 'ArrowDown':
+        event.preventDefault();
+        stepAnnotation(event.key === 'ArrowDown' ? 1 : -1);
+        return;
+      case 'ArrowLeft': case 'ArrowRight': {
+        event.preventDefault();
+        const magnitude = event.shiftKey ? 1_000 : 50;
+        seekTo(get(audioSession).positionMs + (event.key === 'ArrowLeft' ? -magnitude : magnitude));
+      }
     }
   }
 
@@ -793,88 +904,103 @@
     }
   }
 
-  const toolbarActions = {
-    open: () => void openAudio(),
-    importTsv: () => void importTsv(),
-    togglePlay,
-    toggleLoop,
-    toggleFormat: () => void toggleFormat(),
-    openSettings: () => { settingsOpen = true; },
-    exportTsv: () => void exportTsv(),
-    cancelAnalysis: () => void cancelAnalysis(),
-    setVolume: (value: number) => {
-      if (!transitionBusy && !closePromise) void reportPromise(audioSession.setVolume(value));
-    }
-  };
+  function setVolume(value: number): void {
+    if (!transitionBusy && !closePromise) void reportPromise(audioSession.setVolume(value));
+  }
 </script>
 
 <svelte:head><title>ScribeLight</title></svelte:head>
 
 <main class="app-shell">
-  <h1 class="product-title">ScribeLight</h1>
-  <ClipToolbar
+  <h1 class="visually-hidden">ScribeLight</h1>
+  <TopBar
     {filename}
-    playing={playback.state === 'playing'}
-    loopEnabled={playback.loopRange !== null}
-    {canLoop}
-    format={project?.displayFormat ?? 'seconds'}
-    volume={playback.volume}
     {analysisPercent}
     busy={transitionBusy}
-    {settingsBusy}
-    actions={toolbarActions}
+    onopen={() => void openAudio()}
+    onimport={() => void importTsv()}
+    onexport={() => void exportTsv()}
+    oncancelanalysis={() => void cancelAnalysis()}
+    onshortcuts={() => { shortcutsOpen = true; }}
+    onsettings={() => { settingsOpen = true; }}
   />
   <ErrorBanner message={persistentError} dismiss={() => persistentError = null} />
-  <div class="app-status" role="status" aria-label="Operation status" aria-live="polite">{status}</div>
   {#if project}
-    <div class="project-workspace" aria-busy={transitionBusy} inert={transitionBusy}>
+    <div class="workspace" aria-busy={transitionBusy} inert={transitionBusy}>
       <TimelineWorkspace
         durationMs={project.audioIdentity.durationMs}
-        format={project.displayFormat}
         selection={project.activeSelection}
-        onchange={setSelection}
         {peaks}
         annotations={waveformAnnotations}
         {previewAnnotationId}
-        onannotationpreview={previewWaveformAnnotation}
-        onannotationactivate={activateWaveformAnnotation}
+        activeAnnotationId={project.activeAnnotationId}
+        playing={playback.state === 'playing'}
+        {reveal}
         playheadMs={playback.positionMs}
         disabled={transitionBusy}
+        onchange={setSelection}
+        oncreate={createSelection}
+        onseek={seekTo}
+        onannotationpreview={previewWaveformAnnotation}
+        onannotationactivate={activateAnnotation}
       />
-      <div class="lower-workspace">
-        <div class="annotation-column">
-          <ActiveTextEditor
-            store={projectStore}
-            disabled={transitionBusy}
-            onsubmit={() => dashboardHandle?.submitDraft()}
-          />
-          <AnnotationTable
-            annotations={tableAnnotations}
-            activeId={project.activeAnnotationId}
-            format={project.displayFormat}
-            disabled={transitionBusy}
-            onpreview={(id) => { if (!transitionBusy) tablePreviewAnnotationId = id; }}
-            onselect={(annotationId) => { if (!transitionBusy) projectStore.selectAnnotation(annotationId); }}
-            onremove={(annotationId) => { if (!transitionBusy) void projectStore.removeAnnotation(annotationId); }}
-          />
-        </div>
-        <AnnotationDashboard bind:this={dashboardHandle} store={projectStore} disabled={transitionBusy} />
+      <TransportBar
+        positionMs={playback.positionMs}
+        durationMs={project.audioIdentity.durationMs}
+        playing={playback.state === 'playing'}
+        loopEnabled={playback.loopRange !== null}
+        {canLoop}
+        volume={playback.volume}
+        disabled={transitionBusy}
+        ontoggleplay={togglePlay}
+        onskip={(delta) => seekTo(playback.positionMs + delta)}
+        ontoggleloop={toggleLoop}
+        onvolume={setVolume}
+      />
+      <div class="work-area">
+        <AnnotationList
+          annotations={annotationRows}
+          activeId={project.activeAnnotationId}
+          disabled={transitionBusy}
+          onselect={activateAnnotation}
+          onpreview={(annotationId) => { if (!transitionBusy) tablePreviewAnnotationId = annotationId; }}
+          onreview={stepReview}
+        />
+        <AnnotationEditor
+          bind:this={editorHandle}
+          store={projectStore}
+          disabled={transitionBusy}
+          annotationNumber={activeNumber}
+          annotationCount={orderedAnnotations.length}
+          onsetboundary={setBoundaryAtPlayhead}
+          onplayrange={playRange}
+          ondelete={(annotationId) => void deleteAnnotation(annotationId)}
+        />
       </div>
     </div>
   {:else}
-    <section class="empty-state">
-      <p>Open an MP3 or WAV file to begin.</p>
+    <section class="empty-state" aria-label="No clip open">
+      <p>Open an MP3 or WAV clip to start annotating.</p>
+      <button type="button" class="primary" onclick={() => void openAudio()}>Choose audio file</button>
     </section>
   {/if}
+  <footer class="status-bar">
+    <p role="status" aria-label="Operation status" aria-live="polite">{status}</p>
+    {#if undoable}
+      <button type="button" class="ghost" onclick={() => void undoDelete()}>Undo <kbd>Ctrl+Z</kbd></button>
+    {/if}
+    <button type="button" class="ghost hint" onclick={() => { shortcutsOpen = true; }}>Shortcuts <kbd>?</kbd></button>
+  </footer>
   {#if settingsOpen}
     <SettingsDialog
       store={project ? projectStore : null}
       {palette}
-      multilinePolicy={project?.exportSettings.multilinePolicy ?? 'escape'}
-      disabled={transitionBusy || settingsBusy}
+      disabled={transitionBusy}
       onpalette={changePalette}
-      onpolicy={(value) => void setMultilinePolicy(value)}
       onclose={() => { settingsOpen = false; }}
     />
+  {/if}
+  {#if shortcutsOpen}
+    <ShortcutHelp onclose={() => { shortcutsOpen = false; }} />
   {/if}
 </main>

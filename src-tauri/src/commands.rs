@@ -5,7 +5,7 @@ use crate::{
         peaks,
     },
     error::AppError,
-    model::{AudioIdentity, MultilinePolicy, PeakData, PlaybackSnapshot, Project, Selection},
+    model::{AudioIdentity, PeakData, PlaybackSnapshot, Project, Selection},
     persistence,
     tsv::{self, ImportedTsv},
 };
@@ -311,9 +311,9 @@ pub fn load_project(
 }
 
 #[tauri::command]
-pub fn read_tsv(path: String, multiline_policy: MultilinePolicy) -> Result<ImportedTsv, AppError> {
+pub fn read_tsv(path: String) -> Result<ImportedTsv, AppError> {
     let text = std::fs::read_to_string(path)?;
-    tsv::parse_tsv(&text, multiline_policy)
+    tsv::parse_tsv(&text)
 }
 
 #[tauri::command]
