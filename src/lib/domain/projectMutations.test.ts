@@ -6,32 +6,38 @@ const audio = { canonicalPath: 'a.wav', size: 1, modifiedMs: 1, durationMs: 1000
 describe('project label mutations', () => {
   it('renames labels through stable IDs', () => {
     let project = createProject(audio);
-    project = renameSpeaker(project, project.speakers[0].id, 'narrator');
-    project = renameTag(project, project.acousticTags[0].id, 'whisper');
-    expect(project.speakers[0].label).toBe('narrator');
-    expect(project.acousticTags[0].label).toBe('whisper');
+    project.acousticTags = project.acousticTags.filter((tag) => tag.label !== 'code_switch');
+    project = renameSpeaker(project, project.speakers[0].id, 'speaker_7');
+    project = renameTag(project, project.acousticTags[0].id, 'code_switch');
+    expect(project.speakers[0].label).toBe('speaker_7');
+    expect(project.acousticTags[0].label).toBe('code_switch');
   });
 
   it('creates only non-reserved, unique editable labels', () => {
     const project = createProject(audio);
     expect(() => addLabel(project, 'speakers', ' none ')).toThrow('reserved');
     expect(() => addLabel(project, 'speakers', ' speaker_1 ')).toThrow('unique');
-    const result = addLabel(project, 'speakers', ' narrator ');
-    expect(result.speakers.at(-1)?.label).toBe('narrator');
+    const result = addLabel(project, 'speakers', ' speaker_4 ');
+    expect(result.speakers.at(-1)?.label).toBe('speaker_4');
     expect(project.speakers).toHaveLength(3);
   });
 
-  it('rejects tabs when adding or renaming speakers', () => {
+  it('only accepts Yamabiko speaker_<n> labels without tabs', () => {
     const project = createProject(audio);
-    expect(() => addLabel(project, 'speakers', 'guest\tname')).toThrow('Speaker labels cannot contain tabs');
-    expect(() => renameSpeaker(project, project.speakers[0].id, 'guest\tname')).toThrow('Speaker labels cannot contain tabs');
+    expect(() => addLabel(project, 'speakers', 'speaker\t4')).toThrow('Speaker labels cannot contain tabs');
+    expect(() => renameSpeaker(project, project.speakers[0].id, 'speaker\t4')).toThrow('Speaker labels cannot contain tabs');
+    for (const invalid of ['narrator', 'speaker_0', 'speaker_01', 'Speaker_2']) {
+      expect(() => addLabel(project, 'speakers', invalid)).toThrow('speaker_1, speaker_2');
+      expect(() => renameSpeaker(project, project.speakers[0].id, invalid)).toThrow('speaker_1, speaker_2');
+    }
   });
 
-  it('rejects tabs and semicolons when adding or renaming acoustic tags', () => {
+  it('only accepts acoustic tags from the Yamabiko vocabulary', () => {
     const project = createProject(audio);
-    for (const invalid of ['room\ttone', 'music;effects']) {
-      expect(() => addLabel(project, 'acousticTags', invalid)).toThrow(/Acoustic tag labels cannot contain (tabs|semicolons)/);
-      expect(() => renameTag(project, project.acousticTags[0].id, invalid)).toThrow(/Acoustic tag labels cannot contain (tabs|semicolons)/);
+    expect(() => addLabel(project, 'acousticTags', 'room\ttone')).toThrow('Acoustic tag labels cannot contain tabs');
+    for (const invalid of ['music;singing', 'music, singing', 'whisper']) {
+      expect(() => addLabel(project, 'acousticTags', invalid)).toThrow("one of Yamabiko's tags");
+      expect(() => renameTag(project, project.acousticTags[0].id, invalid)).toThrow("one of Yamabiko's tags");
     }
   });
 

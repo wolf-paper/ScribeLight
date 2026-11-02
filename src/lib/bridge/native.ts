@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import type { AudioIdentity, Intelligibility, MultilinePolicy, Project, Selection } from '../domain/types';
+import type { AudioIdentity, Confidence, Intelligibility, Overlap, Project, Selection } from '../domain/types';
 
 export interface PeakData {
   totalFrames: number;
@@ -30,10 +30,10 @@ export interface ImportedAnnotation {
   endMs: number;
   eventType: 'speech' | 'non_speech';
   transcription: string;
-  intelligibility: Intelligibility | 'intelligible';
+  intelligibility: Intelligibility | 'intelligible' | null;
   speaker: string | null;
-  overlap: 'none' | 'overlap';
-  confidence: 'high' | 'medium' | 'low';
+  overlap: Overlap | null;
+  confidence: Confidence | null;
   acousticTags: string[];
   notes: string;
 }
@@ -47,7 +47,7 @@ export interface ImportedTsv {
 export interface NativeBridge {
   saveProject(project: Project): Promise<void>;
   loadProject(canonicalAudioPath: string): Promise<Project | null>;
-  readTsv(path: string, multilinePolicy: MultilinePolicy): Promise<ImportedTsv>;
+  readTsv(path: string): Promise<ImportedTsv>;
   writeTsv(path: string, project: Project): Promise<void>;
   inspectAudio(path: string): Promise<AudioIdentity>;
   analyzeAudio(path: string): Promise<PeakData>;
@@ -67,7 +67,7 @@ export interface NativeBridge {
 export const tauriBridge: NativeBridge = {
   saveProject: (project) => invoke('save_project', { project }),
   loadProject: (canonicalAudioPath) => invoke('load_project', { canonicalAudioPath }),
-  readTsv: (path, multilinePolicy) => invoke('read_tsv', { path, multilinePolicy }),
+  readTsv: (path) => invoke('read_tsv', { path }),
   writeTsv: (path, project) => invoke('write_tsv', { path, project }),
   inspectAudio: (path) => invoke('inspect_audio', { path }),
   analyzeAudio: (path) => invoke('analyze_audio', { path }),

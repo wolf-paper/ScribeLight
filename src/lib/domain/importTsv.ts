@@ -7,8 +7,8 @@ const intelligibilities = ['highly_intelligible', 'partially_intelligible', 'uni
 const overlaps = ['none', 'overlap'] as const;
 const confidences = ['high', 'medium', 'low'] as const;
 
-function assertEnum(value: string, allowed: readonly string[], field: string): void {
-  if (!allowed.includes(value)) throw new Error(`Imported ${field} is invalid`);
+function assertEnum(value: string | null, allowed: readonly string[], field: string): void {
+  if (value !== null && !allowed.includes(value)) throw new Error(`Imported ${field} is invalid`);
 }
 
 function cleanLabel(raw: string): string | null {
@@ -32,10 +32,6 @@ function validatePortableRow(row: ImportedAnnotation): void {
   assertEnum(row.confidence, confidences, 'confidence');
   if (!Number.isInteger(row.startMs) || row.startMs < 0) throw new Error('Imported Start must be a non-negative integer millisecond value');
   if (!Number.isInteger(row.endMs) || row.endMs <= row.startMs) throw new Error('Imported End must be later than Start');
-  if (row.eventType === 'speech' && !cleanLabel(row.speaker ?? '')) throw new Error('Imported speech annotations require a speaker');
-  if (row.eventType === 'speech' && row.intelligibility === 'not_applicable') {
-    throw new Error('Imported speech intelligibility cannot be not_applicable');
-  }
 }
 
 export function mergeImportedTsv(
@@ -89,7 +85,10 @@ export function mergeImportedTsv(
       endMs: row.endMs,
       eventType: row.eventType,
       transcription: row.transcription,
-      intelligibility: normalizeIntelligibility(row.intelligibility),
+      // not_applicable only describes non-speech, so a speech row keeps it unset for review.
+      intelligibility: row.eventType === 'speech' && row.intelligibility === 'not_applicable'
+        ? null
+        : normalizeIntelligibility(row.intelligibility),
       speakerId: speakerId(row.speaker),
       overlap: row.overlap,
       confidence: row.confidence,

@@ -17,7 +17,7 @@ const baseIdentity = {
 } as const;
 const importedFixture: ImportedTsv = {
   speakers: ['speaker_1', 'speaker_2'],
-  acousticTags: ['quiet_dialogue', 'breath'],
+  acousticTags: ['quiet_dialogue', 'breath', 'overlap'],
   annotations: [
     {
       startMs: 1_000,
@@ -28,7 +28,7 @@ const importedFixture: ImportedTsv = {
       speaker: 'speaker_1',
       overlap: 'overlap',
       confidence: 'high',
-      acousticTags: ['quiet_dialogue'],
+      acousticTags: ['quiet_dialogue', 'overlap'],
       notes: ''
     },
     {
@@ -40,7 +40,7 @@ const importedFixture: ImportedTsv = {
       speaker: 'speaker_2',
       overlap: 'overlap',
       confidence: 'medium',
-      acousticTags: ['breath'],
+      acousticTags: ['breath', 'overlap'],
       notes: ''
     },
     ...Array.from({ length: 8 }, (_, index) => ({

@@ -1,39 +1,54 @@
 <script lang="ts">
-  import { formatTime } from '../domain/time';
   import { rulerTicks, timelineContentWidth } from '../domain/timeline';
-  import type { TimeDisplayFormat } from '../domain/types';
 
   export let durationMs: number;
   export let pixelsPerSecond: number;
-  export let format: TimeDisplayFormat;
-  export let layer: 'top-ruler' | 'bottom-ruler';
   export let contentWidth: number;
+  /** Press on the ruler: the parent seeks there and scrubs while the pointer drags. */
+  export let onscrubstart: (event: PointerEvent) => void;
 
   $: ticks = rulerTicks(durationMs, pixelsPerSecond);
   $: width = Number.isFinite(contentWidth) ? Math.max(0, contentWidth) : 0;
 </script>
 
-<div class="time-ruler" aria-label="Time ruler" data-timeline-layer={layer} style:width={`${width}px`}>
-  {#each ticks as tick (tick)}
-    <span class="tick" style:left={`${timelineContentWidth(tick, pixelsPerSecond)}px`}>{formatTime(tick, format)}</span>
+<div
+  class="time-ruler"
+  data-timeline-layer="ruler"
+  role="presentation"
+  title="Click or drag to move the playhead"
+  style:width={`${width}px`}
+  on:pointerdown={onscrubstart}
+>
+  {#each ticks as tick (tick.ms)}
+    <span class="tick" style:left={`${timelineContentWidth(tick.ms, pixelsPerSecond)}px`}>{tick.label}</span>
   {/each}
 </div>
 
 <style>
   .time-ruler {
-    box-sizing: border-box;
-    height: 26px;
-    min-width: 0;
     position: relative;
+    box-sizing: border-box;
+    height: 20px;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    background: var(--color-canvas);
+    border-bottom: 1px solid var(--color-border);
+    cursor: ew-resize;
+    touch-action: none;
+    user-select: none;
   }
 
   .tick {
-    border-left: 1px solid currentColor;
-    font-size: 0.75rem;
-    opacity: 0.8;
-    padding-left: 3px;
     position: absolute;
-    transform: translateX(-1px);
+    top: 0;
+    bottom: 0;
+    padding: 0 0 0 4px;
+    border-left: 1px solid var(--color-border);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 19px;
     white-space: nowrap;
+    pointer-events: none;
   }
 </style>

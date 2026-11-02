@@ -12,9 +12,7 @@ function renderSettings(store: ProjectStore) {
   return render(SettingsDialog, {
     store,
     palette: 'ion-magenta',
-    multilinePolicy: 'escape',
     onpalette: vi.fn(),
-    onpolicy: vi.fn(),
     onclose: vi.fn()
   });
 }
@@ -26,28 +24,27 @@ describe('SpeakerManager', () => {
     store.open(createProject(audio));
     renderSettings(store);
 
-    await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'narrator' } });
+    await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'speaker_4' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add speaker' }));
-    await waitFor(() => expect(get(store).project!.speakers.at(-1)!.label).toBe('narrator'));
+    await waitFor(() => expect(get(store).project!.speakers.at(-1)!.label).toBe('speaker_4'));
     const added = get(store).project!.speakers.at(-1)!;
-    expect(added.label).toBe('narrator');
     const expectedSlot = String(stableColorSlot(added.id, 5));
     expect(screen.getByTestId(`speaker-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
 
-    const rename = await screen.findByLabelText('Rename narrator');
-    await fireEvent.input(rename, { target: { value: 'host' } });
+    const rename = await screen.findByLabelText('Rename speaker_4');
+    await fireEvent.input(rename, { target: { value: 'speaker_9' } });
     await fireEvent.blur(rename);
 
-    await waitFor(() => expect(get(store).project!.speakers.at(-1)).toEqual({ id: added.id, label: 'host' }));
+    await waitFor(() => expect(get(store).project!.speakers.at(-1)).toEqual({ id: added.id, label: 'speaker_9' }));
     expect(screen.getByTestId(`speaker-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
-    expect(saveProject).toHaveBeenLastCalledWith(expect.objectContaining({ speakers: expect.arrayContaining([{ id: added.id, label: 'host' }]) }));
+    expect(saveProject).toHaveBeenLastCalledWith(expect.objectContaining({ speakers: expect.arrayContaining([{ id: added.id, label: 'speaker_9' }]) }));
   });
 
   it('requires an explicit replacement before removing a referenced speaker', async () => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) }, () => 'event-1');
     store.open(createProject(audio));
     store.patchDraft({ startMs: 10, endMs: 20, transcription: 'line' });
-    await store.commitDraft();
+    await store.addDraft();
     renderSettings(store);
 
     const current = get(store).project!;
@@ -82,41 +79,46 @@ describe('SpeakerManager', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('The label none is reserved');
   });
 
-  it('rejects tabs inline when adding and renaming speakers', async () => {
+  it.each([
+    ['tab', 'speaker\t4', 'Speaker labels cannot contain tabs'],
+    ['non-Yamabiko name', 'narrator', 'Speaker labels must be speaker_1, speaker_2']
+  ])('rejects a %s inline when adding and renaming speakers', async (_kind, invalid, message) => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));
     renderSettings(store);
 
-    await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: 'guest\tname' } });
+    await fireEvent.input(screen.getByLabelText('New speaker'), { target: { value: invalid } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add speaker' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Speaker labels cannot contain tabs');
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
 
     const first = get(store).project!.speakers[0];
     const rename = screen.getByLabelText(`Rename ${first.label}`);
-    await fireEvent.input(rename, { target: { value: 'host\tname' } });
+    await fireEvent.input(rename, { target: { value: invalid } });
     await fireEvent.blur(rename);
-    expect(screen.getByRole('alert')).toHaveTextContent('Speaker labels cannot contain tabs');
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
     expect(get(store).project!.speakers[0]).toEqual(first);
   });
 });
 
 describe('AcousticTagManager', () => {
-  it('adds and renames an acoustic tag', async () => {
+  it('adds and renames an acoustic tag within the Yamabiko vocabulary', async () => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
-    store.open(createProject(audio));
+    const project = createProject(audio);
+    project.acousticTags = project.acousticTags.filter((tag) => !['code_switch', 'non_japanese_speech'].includes(tag.label));
+    store.open(project);
     renderSettings(store);
 
-    await fireEvent.input(screen.getByLabelText('New acoustic tag'), { target: { value: 'whisper' } });
+    await fireEvent.input(screen.getByLabelText('New acoustic tag'), { target: { value: 'code_switch' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add acoustic tag' }));
-    await waitFor(() => expect(get(store).project!.acousticTags.at(-1)!.label).toBe('whisper'));
+    await waitFor(() => expect(get(store).project!.acousticTags.at(-1)!.label).toBe('code_switch'));
     const added = get(store).project!.acousticTags.at(-1)!;
     const expectedSlot = String(stableColorSlot(added.id, 5));
     expect(screen.getByTestId(`tag-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
-    const rename = await screen.findByLabelText('Rename whisper');
-    await fireEvent.input(rename, { target: { value: 'aside' } });
+    const rename = await screen.findByLabelText('Rename code_switch');
+    await fireEvent.input(rename, { target: { value: 'non_japanese_speech' } });
     await fireEvent.blur(rename);
 
-    await waitFor(() => expect(get(store).project!.acousticTags.at(-1)).toEqual({ id: added.id, label: 'aside' }));
+    await waitFor(() => expect(get(store).project!.acousticTags.at(-1)).toEqual({ id: added.id, label: 'non_japanese_speech' }));
     expect(screen.getByTestId(`tag-manager-cue-${added.id}`)).toHaveAttribute('data-color-slot', expectedSlot);
   });
 
@@ -125,7 +127,7 @@ describe('AcousticTagManager', () => {
     store.open(createProject(audio));
     const tag = get(store).project!.acousticTags[0];
     store.patchDraft({ startMs: 10, endMs: 20, transcription: 'line', acousticTagIds: [tag.id] });
-    await store.commitDraft();
+    await store.addDraft();
     renderSettings(store);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
 
@@ -140,7 +142,7 @@ describe('AcousticTagManager', () => {
 
   it.each([
     ['tab', 'room\ttone', 'Acoustic tag labels cannot contain tabs'],
-    ['semicolon', 'music;effects', 'Acoustic tag labels cannot contain semicolons']
+    ['non-Yamabiko tag', 'whisper', "Acoustic tags must be one of Yamabiko's tags"]
   ])('rejects a %s inline when adding and renaming acoustic tags', async (_kind, invalid, message) => {
     const store = new ProjectStore({ saveProject: vi.fn(async () => undefined) });
     store.open(createProject(audio));

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { createProject } from './lib/domain/project';
+import { formatTime } from './lib/domain/time';
 import type { PeakData } from './lib/bridge/native';
 import { PALETTE_STORAGE_KEY } from './lib/theme/palette';
 import { fakeIdentity, fakePeaks, makeFakeBridge, makeFakeLifecycle, nullPickers } from './test/fakeBridge';
@@ -11,12 +12,15 @@ const waveformSpies = vi.hoisted(() => ({
   setAnnotations: vi.fn(),
   setPreviewAnnotation: vi.fn(),
   setPlayhead: vi.fn(),
+  setActiveAnnotation: vi.fn(),
   setZoom: vi.fn(),
   destroy: vi.fn()
 }));
 const waveformInteractions = vi.hoisted(() => ({
   latest: null as null | {
     onSelectionChange(selection: { startMs: number; endMs: number }): void;
+    onSelectionCreate(selection: { startMs: number; endMs: number }): void;
+    onSeek(milliseconds: number): void;
     onAnnotationPreview(annotationId: string, previewing: boolean): void;
     onAnnotationActivate(annotationId: string): void;
   }
@@ -39,13 +43,23 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function replaceSequentially(input: HTMLElement, value: string): Promise<void> {
-  await fireEvent.input(input, { target: { value: '' } });
-  let entered = '';
-  for (const digit of value) {
-    entered += digit;
-    await fireEvent.input(input, { target: { value: entered } });
-  }
+const startField = () => screen.getByRole('textbox', { name: 'Start time' }) as HTMLInputElement;
+const endField = () => screen.getByRole('textbox', { name: 'End time' }) as HTMLInputElement;
+const loopButton = () => screen.getByRole('button', { name: /Loop range/ });
+const addButton = () => screen.getByRole('button', { name: /Add annotation/ });
+const rowFor = (startMs: number, text: string) => screen.getByRole('row', { name: `Annotation at ${formatTime(startMs)}: ${text}` });
+
+/** Marks a new range the way a drag across the waveform does. */
+async function markRange(startMs: number, endMs: number): Promise<void> {
+  waveformInteractions.latest!.onSelectionCreate({ startMs, endMs });
+  await waitFor(() => expect(startField()).toHaveValue(formatTime(startMs)));
+  expect(endField()).toHaveValue(formatTime(endMs));
+}
+
+async function typeTime(field: HTMLInputElement, value: string): Promise<void> {
+  await fireEvent.focus(field);
+  await fireEvent.input(field, { target: { value } });
+  await fireEvent.keyDown(field, { key: 'Enter' });
 }
 
 function renderApp(overrides: Record<string, unknown> = {}) {
@@ -74,7 +88,7 @@ describe('App', () => {
   it('identifies the product and empty state without touching a live Tauri window', () => {
     renderApp();
     expect(screen.getByRole('heading', { name: 'ScribeLight' })).toBeInTheDocument();
-    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(screen.getByText('Open an MP3 or WAV clip to start annotating.')).toBeInTheDocument();
   });
 
   it('mounts with the Ion Magenta fallback when the localStorage getter throws', async () => {
@@ -93,7 +107,6 @@ describe('App', () => {
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Speaker manager' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Acoustic tag manager' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: 'Multiline export policy' })).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
@@ -113,7 +126,6 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(screen.getByRole('region', { name: 'Speaker manager' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Acoustic tag manager' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     expect(screen.queryByRole('region', { name: 'Speaker manager' })).not.toBeInTheDocument();
   });
@@ -151,33 +163,17 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
 
     await openClip();
-    const workspace = screen.getByLabelText('Audio waveform').closest('.project-workspace');
-    const timeline = screen.getByTestId('timeline-workspace');
-    const lowerWorkspace = workspace?.querySelector('.lower-workspace');
-    expect(workspace?.firstElementChild).toBe(timeline);
-    expect(lowerWorkspace?.children[0]).toHaveClass('annotation-column');
-    expect(lowerWorkspace?.children[1]).toHaveClass('annotation-dashboard');
-    expect(lowerWorkspace?.querySelector('.annotation-column')?.children[0]).toHaveClass('active-text-editor');
-    expect(lowerWorkspace?.querySelector('.annotation-column')?.children[1]).toHaveClass('annotation-table');
-    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    expect(addButton()).toBeInTheDocument();
     expect(waveformSpies.setAnnotations).toHaveBeenCalledWith([
-      { id: 'first', startMs: 1_000, endMs: 2_000 },
-      { id: 'second', startMs: 1_500, endMs: 2_500 }
+      { id: 'first', startMs: 1_000, endMs: 2_000, label: 'speaker_1' },
+      { id: 'second', startMs: 1_500, endMs: 2_500, label: 'speaker_1' }
     ]);
 
-    const firstRow = screen.getByRole('row', { name: 'Activate annotation First transcription' });
-    const secondRow = screen.getByRole('row', { name: 'Activate annotation Second transcription' });
+    const firstRow = rowFor(1_000, 'First transcription');
+    const secondRow = rowFor(1_500, 'Second transcription');
     const loopCallsBeforeHover = bridge.audioSetLoop.mock.calls.length;
     const saveCallsBeforeHover = bridge.saveProject.mock.calls.length;
     const savedProjectsBeforeHover = structuredClone(bridge.savedProjects);
-    const boundariesBeforeHover = {
-      start: (screen.getByLabelText('Start milliseconds') as HTMLInputElement).value,
-      end: (screen.getByLabelText('End milliseconds') as HTMLInputElement).value
-    };
-    const activeRowsBeforeHover = [
-      firstRow.getAttribute('aria-current'),
-      secondRow.getAttribute('aria-current')
-    ];
     const interactions = waveformInteractions.latest!;
 
     interactions.onAnnotationPreview('second', true);
@@ -187,10 +183,9 @@ describe('App', () => {
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
     await new Promise((resolve) => setTimeout(resolve, 350));
 
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(Number(boundariesBeforeHover.start));
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(Number(boundariesBeforeHover.end));
-    expect([firstRow.getAttribute('aria-current'), secondRow.getAttribute('aria-current')])
-      .toEqual(activeRowsBeforeHover);
+    expect(startField()).toHaveValue('0:03.000');
+    expect(endField()).toHaveValue('0:04.000');
+    expect([firstRow.getAttribute('aria-selected'), secondRow.getAttribute('aria-selected')]).toEqual(['false', 'false']);
     expect(bridge.audioSetLoop).toHaveBeenCalledTimes(loopCallsBeforeHover);
     expect(bridge.saveProject).toHaveBeenCalledTimes(saveCallsBeforeHover);
     expect(bridge.savedProjects).toEqual(savedProjectsBeforeHover);
@@ -199,10 +194,8 @@ describe('App', () => {
     await fireEvent.pointerEnter(secondRow);
 
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('second'));
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(3_000);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(4_000);
-    expect(firstRow).not.toHaveAttribute('aria-current');
-    expect(secondRow).not.toHaveAttribute('aria-current');
+    expect(startField()).toHaveValue('0:03.000');
+    expect(endField()).toHaveValue('0:04.000');
     expect(bridge.audioSetLoop).toHaveBeenCalledTimes(loopCallsBeforeHover);
     expect(bridge.saveProject).toHaveBeenCalledTimes(saveCallsBeforeHover);
     expect(bridge.savedProjects).toEqual(savedProjectsBeforeHover);
@@ -211,15 +204,17 @@ describe('App', () => {
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
     interactions.onAnnotationActivate('second');
 
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(1_500));
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(2_500);
+    await waitFor(() => expect(startField()).toHaveValue('0:01.500'));
+    expect(endField()).toHaveValue('0:02.500');
     expect(screen.getByLabelText('Transcription')).toHaveValue('Second transcription');
-    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
-    expect(secondRow).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('heading', { name: 'Annotation 2 of 2' })).toBeInTheDocument();
+    expect(secondRow).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenLastCalledWith(1_500));
 
     await fireEvent.pointerEnter(firstRow);
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith('first'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove annotation First transcription' }));
+    await fireEvent.click(firstRow);
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(firstRow).not.toBeInTheDocument());
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
   });
@@ -250,13 +245,13 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
 
     await openClip();
-    const firstRow = screen.getByRole('row', { name: 'Activate annotation First transcription' });
-    const secondRow = screen.getByRole('row', { name: 'Activate annotation Second transcription' });
+    const firstRow = rowFor(1_000, 'First transcription');
+    const secondRow = rowFor(1_500, 'Second transcription');
     const interactions = waveformInteractions.latest!;
     const loopCallsBeforePreview = bridge.audioSetLoop.mock.calls.length;
     const saveCallsBeforePreview = bridge.saveProject.mock.calls.length;
     const savedProjectsBeforePreview = structuredClone(bridge.savedProjects);
-    const activeRowsBeforePreview = [firstRow.getAttribute('aria-current'), secondRow.getAttribute('aria-current')];
+    const activeRowsBeforePreview = [firstRow.getAttribute('aria-selected'), secondRow.getAttribute('aria-selected')];
     waveformSpies.setPreviewAnnotation.mockClear();
 
     await fireEvent.focusIn(firstRow);
@@ -292,21 +287,21 @@ describe('App', () => {
     if (renderedTransitions[0] === null) renderedTransitions.shift();
     expect(renderedTransitions).toEqual(['first', 'second', 'first', null, 'first', 'second', null]);
     await new Promise((resolve) => setTimeout(resolve, 350));
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(3_000);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(4_000);
-    expect([firstRow.getAttribute('aria-current'), secondRow.getAttribute('aria-current')])
+    expect(startField()).toHaveValue('0:03.000');
+    expect(endField()).toHaveValue('0:04.000');
+    expect([firstRow.getAttribute('aria-selected'), secondRow.getAttribute('aria-selected')])
       .toEqual(activeRowsBeforePreview);
     expect(bridge.audioSetLoop).toHaveBeenCalledTimes(loopCallsBeforePreview);
     expect(bridge.saveProject).toHaveBeenCalledTimes(saveCallsBeforePreview);
     expect(bridge.savedProjects).toEqual(savedProjectsBeforePreview);
   });
 
-  it('completes open, select/loop, annotate/update, reopen, import, and export using real stores', async () => {
+  it('completes open, mark/loop, add, autosave, reopen, import, and export using real stores', async () => {
     const identity = fakeIdentity('C:\\audio\\clip.wav');
     const imported = {
-      speakers: ['guest'], acousticTags: ['laugh'], annotations: [{
+      speakers: ['speaker_4'], acousticTags: ['laugh'], annotations: [{
         startMs: 300, endMs: 400, eventType: 'speech' as const, transcription: 'imported',
-        intelligibility: 'intelligible' as const, speaker: 'guest', overlap: 'none' as const,
+        intelligibility: 'intelligible' as const, speaker: 'speaker_4', overlap: 'none' as const,
         confidence: 'high' as const, acousticTags: ['laugh'], notes: ''
       }]
     };
@@ -322,64 +317,44 @@ describe('App', () => {
     });
 
     await openClip();
-    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    const multilinePolicy = screen.getByRole('combobox', { name: 'Multiline export policy' });
-    expect(multilinePolicy).toHaveValue('escape');
-    expect(multilinePolicy).toHaveTextContent('Escape line breaks as \\n');
-    expect(multilinePolicy).toHaveTextContent('Replace line breaks with spaces');
-    expect(multilinePolicy).toHaveTextContent('Preserve line breaks in quoted fields');
-    await fireEvent.change(multilinePolicy, { target: { value: 'space' } });
-    await waitFor(() => expect(bridge.saveProject).toHaveBeenCalledWith(expect.objectContaining({
-      exportSettings: { multilinePolicy: 'space' }
-    })));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
-    expect(screen.getByTestId('timeline-content').children).toHaveLength(4);
-    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
-    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '250' } });
-    await fireEvent.change(screen.getByLabelText('End milliseconds'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await markRange(100, 250);
+    await fireEvent.click(loopButton());
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 250 }));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'うん' } });
     await fireEvent.keyDown(screen.getByLabelText('Transcription'), { key: 'Enter' });
     await waitFor(() => expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('うん'));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'うん!' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Update annotation' }));
     await waitFor(() => expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('うん!'));
+    expect(screen.queryByRole('button', { name: /update/i })).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(audio).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(bridge.audioOpen).toHaveBeenCalledTimes(2));
-    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.getByRole('combobox', { name: 'Multiline export policy' })).toHaveValue('space');
-    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Import TSV' })).toBeEnabled());
     await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
     expect(await screen.findByText('imported')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
     await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
-      exportSettings: { multilinePolicy: 'space' },
       annotations: expect.arrayContaining([expect.objectContaining({ transcription: 'うん!' }), expect.objectContaining({ transcription: 'imported' })])
     })));
     await waitFor(() => expect(screen.getByRole('status', { name: 'Operation status' })).toHaveTextContent('Exported 2 annotations'));
   });
 
-  it('clears an enabled native loop when the inspector clears its canonical selection', async () => {
+  it('clears an enabled native loop when the editor discards its range', async () => {
     const bridge = makeFakeBridge({ identity: fakeIdentity('clip.wav', 10_000) });
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
 
-    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
-    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
-    await fireEvent.change(screen.getByLabelText('End milliseconds'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await markRange(100, 1_000);
+    await fireEvent.click(loopButton());
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
 
     await waitFor(() => expect(bridge.audioClearLoop).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: 'Loop off' })).toBeDisabled();
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(loopButton()).toBeDisabled();
+    expect(startField()).toHaveValue('0:00.000');
+    expect(endField()).toHaveValue('0:00.000');
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
   });
 
@@ -388,10 +363,8 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
 
-    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
-    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
-    await fireEvent.change(screen.getByLabelText('End milliseconds'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await markRange(100, 1_000);
+    await fireEvent.click(loopButton());
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
 
     const snapshotCallsBeforeReplacement = bridge.audioSnapshot.mock.calls.length;
@@ -401,13 +374,13 @@ describe('App', () => {
     bridge.audioClearLoop.mockClear();
     const snapshotCallsBeforeClear = bridge.audioSnapshot.mock.calls.length;
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
 
     await waitFor(() => expect(bridge.audioSnapshot.mock.calls.length).toBeGreaterThan(snapshotCallsBeforeClear));
     expect(bridge.audioClearLoop).not.toHaveBeenCalled();
     expect(bridge.snapshot.loopRange).toEqual({ startMs: 200, endMs: 300 });
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(startField()).toHaveValue('0:00.000');
+    expect(endField()).toHaveValue('0:00.000');
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
   });
 
@@ -423,14 +396,12 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
 
-    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
-    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
-    await fireEvent.change(screen.getByLabelText('End milliseconds'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await markRange(100, 1_000);
+    await fireEvent.click(loopButton());
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
     expect(bridge.snapshot.loopRange).toBeNull();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     const snapshotCallsBeforeResolve = bridge.audioSnapshot.mock.calls.length;
     pendingEnable.resolve();
     await enableApplied.promise;
@@ -438,9 +409,9 @@ describe('App', () => {
 
     expect(bridge.audioClearLoop).toHaveBeenCalledOnce();
     expect(bridge.snapshot.loopRange).toBeNull();
-    expect(screen.getByRole('button', { name: 'Loop off' })).toBeDisabled();
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(loopButton()).toBeDisabled();
+    expect(startField()).toHaveValue('0:00.000');
+    expect(endField()).toHaveValue('0:00.000');
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
   });
 
@@ -458,15 +429,13 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
 
-    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
-    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
-    await fireEvent.change(screen.getByLabelText('End milliseconds'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await markRange(100, 1_000);
+    await fireEvent.click(loopButton());
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith(appSelection));
 
     bridge.snapshot = { ...bridge.snapshot, loopRange: externalLoop };
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Loop on' })).toBeInTheDocument());
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
+    await waitFor(() => expect(loopButton()).toHaveAttribute('aria-pressed', 'true'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
     pendingEnable.resolve();
     await enableApplied.promise;
 
@@ -474,9 +443,9 @@ describe('App', () => {
     expect(bridge.audioSetLoop.mock.calls.map(([selection]) => selection)).toEqual([appSelection, externalLoop]);
     expect(bridge.audioClearLoop).not.toHaveBeenCalled();
     expect(bridge.snapshot.loopRange).toEqual(externalLoop);
-    expect(screen.getByRole('button', { name: 'Loop on' })).toBeEnabled();
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
+    expect(loopButton()).toBeEnabled();
+    expect(startField()).toHaveValue('0:00.000');
+    expect(endField()).toHaveValue('0:00.000');
     expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null);
   });
 
@@ -490,9 +459,9 @@ describe('App', () => {
     const interactions = waveformInteractions.latest!;
 
     interactions.onSelectionChange(loopB);
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(loopB.startMs));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Loop on' })).toBeInTheDocument());
+    await waitFor(() => expect(startField()).toHaveValue(formatTime(loopB.startMs)));
+    await fireEvent.click(loopButton());
+    await waitFor(() => expect(loopButton()).toHaveAttribute('aria-pressed', 'true'));
     expect(bridge.snapshot.loopRange).toEqual(loopB);
     await Promise.resolve();
     await Promise.resolve();
@@ -535,7 +504,7 @@ describe('App', () => {
     await refreshCStarted.promise;
     expect(bridge.snapshot.loopRange).toEqual(loopC);
     interactions.onSelectionChange(loopD);
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(loopD.startMs));
+    await waitFor(() => expect(startField()).toHaveValue(formatTime(loopD.startMs)));
     await Promise.resolve();
 
     holdRefreshC = false;
@@ -545,8 +514,8 @@ describe('App', () => {
     await Promise.resolve();
     expect(bridge.snapshot.loopRange).toEqual(loopC);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Clear annotation' }));
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(0));
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(startField()).toHaveValue('0:00.000'));
     await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenLastCalledWith(null));
     setD.resolve();
 
@@ -555,11 +524,11 @@ describe('App', () => {
       .toEqual([loopB, loopC, loopD, loopC]);
     expect(bridge.audioClearLoop).not.toHaveBeenCalled();
     expect(bridge.snapshot.loopRange).toEqual(loopC);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(0);
-    expect(screen.getByRole('button', { name: 'Loop on' })).toBeEnabled();
+    expect(endField()).toHaveValue('0:00.000');
+    expect(loopButton()).toBeEnabled();
   });
 
-  it('holds empty and invalid boundary edits locally before realigning waveform, native loop, and export', async () => {
+  it('applies typed range times only when valid, then realigns waveform, native loop, and export', async () => {
     const identity = fakeIdentity('clip.wav', 10_000);
     const bridge = makeFakeBridge({ identity });
     renderApp({
@@ -569,41 +538,27 @@ describe('App', () => {
     });
     await openClip();
 
-    await fireEvent.input(screen.getByLabelText('End milliseconds'), { target: { value: '1000' } });
-    await fireEvent.input(screen.getByLabelText('Start milliseconds'), { target: { value: '100' } });
-    await fireEvent.change(screen.getByLabelText('Start milliseconds'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
+    await markRange(100, 1_000);
+    await fireEvent.click(loopButton());
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
     bridge.audioSetLoop.mockClear();
     waveformSpies.setSelection.mockClear();
 
-    const start = screen.getByLabelText('Start milliseconds');
-    const end = screen.getByLabelText('End milliseconds');
-    await replaceSequentially(start, '3000');
-    expect(start).toHaveValue(3000);
-    await Promise.resolve();
-    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
-    expect(waveformSpies.setSelection.mock.calls.every(([selection]) => (
-      selection.startMs === 100 && selection.endMs === 1_000
-    ))).toBe(true);
-    await fireEvent.change(start);
-    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
-    expect(bridge.audioSetLoop).not.toHaveBeenCalled();
-
-    await replaceSequentially(end, '4000');
-    expect(end).toHaveValue(4000);
-    await Promise.resolve();
+    await typeTime(startField(), '0:03.000');
+    expect(screen.getByRole('alert')).toHaveTextContent('start before the end');
+    expect(startField()).toHaveValue('0:00.100');
     expect(bridge.audioSetLoop).not.toHaveBeenCalled();
     expect(waveformSpies.setSelection.mock.calls.every(([selection]) => (
       selection.startMs === 100 && selection.endMs === 1_000
     ))).toBe(true);
 
-    await fireEvent.change(end);
+    await typeTime(endField(), '4');
+    await typeTime(startField(), '3');
     await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 3_000, endMs: 4_000 }));
     await waitFor(() => expect(bridge.audioSetLoop).toHaveBeenCalledWith({ startMs: 3_000, endMs: 4_000 }));
     await fireEvent.input(screen.getByLabelText('Transcription'), { target: { value: 'numeric range' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add annotation' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument());
+    await fireEvent.click(addButton());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Annotation 1 of 1' })).toBeInTheDocument());
 
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
     await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
@@ -612,53 +567,6 @@ describe('App', () => {
       draft: expect.objectContaining({ startMs: 3_000, endMs: 4_000 }),
       annotations: [expect.objectContaining({ id: 'numeric-event', startMs: 3_000, endMs: 4_000 })]
     })));
-  });
-
-  it('validates pending raw boundaries before transcription Enter can commit or persist', async () => {
-    const identity = fakeIdentity('clip.wav', 10_000);
-    const bridge = makeFakeBridge({ identity });
-    renderApp({
-      bridge,
-      pickers: { ...nullPickers, audio: async () => 'clip.wav' },
-      id: () => 'coordinated-event'
-    });
-    await openClip();
-
-    const start = screen.getByLabelText('Start milliseconds');
-    const end = screen.getByLabelText('End milliseconds');
-    await fireEvent.input(end, { target: { value: '1000' } });
-    await fireEvent.input(start, { target: { value: '100' } });
-    await fireEvent.change(start);
-    await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 100, endMs: 1_000 }));
-
-    await replaceSequentially(start, '3000');
-    await fireEvent.change(start);
-    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
-    const transcription = screen.getByRole('textbox', { name: 'Transcription' });
-    await fireEvent.input(transcription, { target: { value: 'must wait for valid boundaries' } });
-    bridge.saveProject.mockClear();
-
-    await fireEvent.keyDown(transcription, { key: 'Enter' });
-    await Promise.resolve();
-    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Saved annotations').querySelectorAll('.annotation-row')).toHaveLength(0);
-    expect(bridge.saveProject).not.toHaveBeenCalled();
-    expect(start).toHaveValue(3000);
-    expect(end).toHaveValue(1000);
-    expect(screen.getByRole('alert')).toHaveTextContent(/valid whole-millisecond range/i);
-
-    await replaceSequentially(end, '4000');
-    await fireEvent.keyDown(transcription, { key: 'Enter' });
-    await waitFor(() => expect(screen.getByLabelText('Saved annotations')).toHaveTextContent('must wait for valid boundaries'));
-    await waitFor(() => expect(bridge.saveProject).toHaveBeenCalledWith(expect.objectContaining({
-      activeAnnotationId: 'coordinated-event',
-      activeSelection: { startMs: 3_000, endMs: 4_000 },
-      annotations: [expect.objectContaining({
-        id: 'coordinated-event', startMs: 3_000, endMs: 4_000,
-        transcription: 'must wait for valid boundaries'
-      })]
-    })));
-    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
   });
 
   it('normalizes a stale recovered selection to the newer valid editor boundaries on reopen', async () => {
@@ -682,9 +590,9 @@ describe('App', () => {
 
     await openClip();
 
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(400);
-    expect(screen.getByRole('button', { name: 'Update annotation' })).toBeInTheDocument();
+    expect(startField()).toHaveValue('0:00.300');
+    expect(endField()).toHaveValue('0:00.400');
+    expect(screen.getByRole('heading', { name: 'Annotation 1 of 1' })).toBeInTheDocument();
     await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 300, endMs: 400 }));
   });
 
@@ -699,9 +607,9 @@ describe('App', () => {
     await openClip();
 
     expect(screen.queryByRole('alert', { name: 'Application error' })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(400);
-    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeInTheDocument();
+    expect(startField()).toHaveValue('0:00.300');
+    expect(endField()).toHaveValue('0:00.400');
+    expect(addButton()).toBeInTheDocument();
     await waitFor(() => expect(waveformSpies.setSelection).toHaveBeenCalledWith({ startMs: 300, endMs: 400 }));
   });
 
@@ -730,7 +638,7 @@ describe('App', () => {
     });
 
     await openClip();
-    expect(screen.getByLabelText('Intelligibility')).toHaveValue('highly_intelligible');
+    expect(screen.getByRole('radio', { name: 'Intelligible' })).toHaveAttribute('aria-checked', 'true');
     await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
 
     await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
@@ -738,6 +646,88 @@ describe('App', () => {
       draft: expect.objectContaining({ intelligibility: 'highly_intelligible' }),
       annotations: [expect.objectContaining({ intelligibility: 'highly_intelligible' })]
     })));
+  });
+
+  it('imports unlabeled review rows and saves their labels as they are chosen', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const bridge = makeFakeBridge({
+      identity,
+      imported: {
+        speakers: [], acousticTags: [],
+        annotations: [{
+          startMs: 100, endMs: 250, eventType: 'speech', transcription: 'subtitle cue',
+          intelligibility: null, speaker: null, overlap: null, confidence: null, acousticTags: [], notes: ''
+        }]
+      }
+    });
+    const confirm = vi.fn(() => true);
+    renderApp({
+      bridge,
+      confirm,
+      pickers: { ...nullPickers, audio: async () => 'clip.wav', tsv: async () => 'rows.tsv', exportTsv: async () => 'clip.tsv' }
+    });
+    await openClip();
+    const labelGroups = ['Speaker', 'Intelligibility', 'Overlap', 'Confidence'];
+    const radio = (group: string, name: string) => within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Import TSV' }));
+    const status = screen.getByRole('status', { name: 'Operation status' });
+    await waitFor(() => expect(status).toHaveTextContent('Imported 1 annotation; 1 needs review for Yamabiko'));
+    const row = rowFor(100, 'subtitle cue');
+    expect(row).toHaveTextContent('Not set');
+    expect(row).toHaveTextContent('Needs review');
+
+    await fireEvent.click(row);
+    const note = await screen.findByRole('note', { name: 'Yamabiko review' });
+    for (const message of ['Choose a speaker', 'Choose an intelligibility', 'Choose an overlap value', 'Choose a confidence']) {
+      expect(note).toHaveTextContent(message);
+    }
+    for (const group of labelGroups) expect(screen.getByRole('radiogroup', { name: group })).toHaveAttribute('aria-invalid', 'true');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('1 annotation still needs review'));
+    confirm.mockReturnValue(false);
+
+    await fireEvent.click(radio('Speaker', 'speaker_2'));
+    await fireEvent.click(radio('Intelligibility', 'Partly'));
+    await fireEvent.click(radio('Overlap', 'No'));
+    await fireEvent.click(radio('Confidence', 'Low'));
+    await waitFor(() => expect(row).not.toHaveTextContent('Needs review'));
+    expect(row).not.toHaveTextContent('Not set');
+    expect(screen.queryByRole('note', { name: 'Yamabiko review' })).not.toBeInTheDocument();
+
+    confirm.mockClear();
+    await fireEvent.click(screen.getByRole('button', { name: 'Export TSV' }));
+    await waitFor(() => expect(status).toHaveTextContent(/^Exported 1 annotation$/));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(bridge.writeTsv).toHaveBeenLastCalledWith('clip.tsv', expect.objectContaining({
+      annotations: [expect.objectContaining({ intelligibility: 'partially_intelligible', overlap: 'none', confidence: 'low' })]
+    }));
+  });
+
+  it('reopens a recovered project whose annotations still need labels', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored.annotations = [{
+      ...restored.draft,
+      id: 'unlabeled-event',
+      startMs: 100,
+      endMs: 200,
+      transcription: 'subtitle cue',
+      intelligibility: null,
+      speakerId: null,
+      overlap: null,
+      confidence: null,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z'
+    }];
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+
+    await openClip();
+
+    expect(screen.queryByRole('alert', { name: 'Application error' })).not.toBeInTheDocument();
+    expect(rowFor(100, 'subtitle cue')).toHaveTextContent('Not set');
   });
 
   it.each([
@@ -839,60 +829,6 @@ describe('App', () => {
     expect(await screen.findByRole('alert', { name: 'Application error' })).toHaveTextContent(/recovered (draft|active annotation)/i);
     expect(bridge.analyzeAudio).not.toHaveBeenCalled();
     expect(bridge.audioOpen).not.toHaveBeenCalled();
-  });
-
-  it('waits for an immediate multiline policy save before exporting the authoritative project', async () => {
-    const policySave = deferred<void>();
-    const bridge = makeFakeBridge();
-    bridge.saveProject.mockImplementationOnce(() => policySave.promise).mockResolvedValue(undefined);
-    renderApp({
-      bridge,
-      pickers: { ...nullPickers, audio: async () => 'clip.wav', exportTsv: async () => 'clip.tsv' }
-    });
-    await openClip();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    const selector = screen.getByRole('combobox', { name: 'Multiline export policy' }) as HTMLSelectElement;
-    const exportButton = screen.getByRole('button', { name: 'Export TSV' });
-    selector.value = 'space';
-    selector.dispatchEvent(new Event('change', { bubbles: true }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
-    exportButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await Promise.resolve();
-
-    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
-    expect(bridge.writeTsv).not.toHaveBeenCalled();
-    policySave.resolve();
-
-    await waitFor(() => expect(bridge.writeTsv).toHaveBeenCalledWith('clip.tsv', expect.objectContaining({
-      exportSettings: { multilinePolicy: 'space' }
-    })));
-  });
-
-  it('waits for an immediate multiline policy save before importing with the authoritative policy', async () => {
-    const policySave = deferred<void>();
-    const bridge = makeFakeBridge();
-    bridge.saveProject.mockImplementationOnce(() => policySave.promise).mockResolvedValue(undefined);
-    renderApp({
-      bridge,
-      pickers: { ...nullPickers, audio: async () => 'clip.wav', tsv: async () => 'rows.tsv' }
-    });
-    await openClip();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    const selector = screen.getByRole('combobox', { name: 'Multiline export policy' }) as HTMLSelectElement;
-    const importButton = screen.getByRole('button', { name: 'Import TSV' });
-    selector.value = 'quoted';
-    selector.dispatchEvent(new Event('change', { bubbles: true }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
-    importButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await Promise.resolve();
-
-    expect(bridge.saveProject).toHaveBeenCalledTimes(1);
-    expect(bridge.readTsv).not.toHaveBeenCalled();
-    policySave.resolve();
-
-    await waitFor(() => expect(bridge.readTsv).toHaveBeenCalledWith('rows.tsv', 'quoted'));
   });
 
   it('preserves the old project, waveform, and native clip when preparing a replacement fails', async () => {
@@ -1019,26 +955,22 @@ describe('App', () => {
 
     expect(screen.getByLabelText('Notes')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Import TSV' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Show clock time' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled();
     expect(screen.getByLabelText('Volume')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Add annotation' })).toBeDisabled();
+    expect(addButton()).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Settings' })).toBeDisabled();
-    expect(screen.getByLabelText('Audio waveform').closest('.project-workspace')).toHaveProperty('inert', true);
-    const savedRow = screen.getByRole('row', { name: 'Activate annotation Saved annotation' });
+    expect(screen.getByLabelText('Audio waveform').closest('.workspace')).toHaveProperty('inert', true);
+    const savedRow = rowFor(100, 'Saved annotation');
     await waitFor(() => expect(waveformSpies.setPreviewAnnotation).toHaveBeenLastCalledWith(null));
     const previewCallsWhileBusy = waveformSpies.setPreviewAnnotation.mock.calls.length;
-    const boundariesWhileBusy = {
-      start: (screen.getByLabelText('Start milliseconds') as HTMLInputElement).value,
-      end: (screen.getByLabelText('End milliseconds') as HTMLInputElement).value
-    };
+    const boundariesWhileBusy = { start: startField().value, end: endField().value };
     waveformInteractions.latest?.onAnnotationPreview('saved', true);
     waveformInteractions.latest?.onAnnotationActivate('saved');
     await Promise.resolve();
     expect(waveformSpies.setPreviewAnnotation).toHaveBeenCalledTimes(previewCallsWhileBusy);
-    expect(savedRow).not.toHaveAttribute('aria-current');
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(Number(boundariesWhileBusy.start));
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(Number(boundariesWhileBusy.end));
+    expect(savedRow).toHaveAttribute('aria-selected', 'false');
+    expect(startField()).toHaveValue(boundariesWhileBusy.start);
+    expect(endField()).toHaveValue(boundariesWhileBusy.end);
     await fireEvent.input(screen.getByLabelText('Notes'), { target: { value: 'must be blocked' } });
     await fireEvent.keyDown(window, { key: 'i' });
     await fireEvent.click(screen.getByRole('button', { name: 'Cancel analysis' }));
@@ -1047,8 +979,6 @@ describe('App', () => {
     replacement.resolve(fakeIdentity('new.wav'));
     await waitFor(() => expect(screen.getByLabelText('Notes')).toBeEnabled());
     expect(screen.getByText('old.wav')).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole('button', { name: 'Show clock time' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Show decimal seconds' })).toBeInTheDocument());
     expect(bridge.saveProject).toHaveBeenLastCalledWith(expect.objectContaining({
       draft: expect.objectContaining({ notes: 'old draft' })
     }));
@@ -1064,12 +994,12 @@ describe('App', () => {
     });
     const identity = { ...fakeIdentity('changed.wav', 1_000), size: 2 };
     const bridge = makeFakeBridge({ identity, restored });
-    const confirmRecovery = vi.fn(async () => true);
-    renderApp({ bridge, confirmRecovery, pickers: { ...nullPickers, audio: async () => 'changed.wav' } });
+    const confirm = vi.fn(async () => true);
+    renderApp({ bridge, confirm, pickers: { ...nullPickers, audio: async () => 'changed.wav' } });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('does not fit the changed audio duration');
-    expect(confirmRecovery).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(bridge.analyzeAudio).not.toHaveBeenCalled();
     expect(bridge.audioOpen).not.toHaveBeenCalled();
   });
@@ -1257,7 +1187,7 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/waveform.*does not match/i);
-    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(screen.getByText('Open an MP3 or WAV clip to start annotating.')).toBeInTheDocument();
     expect(bridge.audioOpen).not.toHaveBeenCalled();
   });
 
@@ -1273,7 +1203,7 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/waveform.*does not match/i);
-    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(screen.getByText('Open an MP3 or WAV clip to start annotating.')).toBeInTheDocument();
     expect(bridge.audioOpen).not.toHaveBeenCalled();
   });
 
@@ -1285,11 +1215,11 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/source audio changed/i);
-    expect(screen.getByText('Open an MP3 or WAV file to begin.')).toBeInTheDocument();
+    expect(screen.getByText('Open an MP3 or WAV clip to start annotating.')).toBeInTheDocument();
     expect(bridge.audioClose).toHaveBeenCalledTimes(1);
   });
 
-  it('restarts an active selection before toolbar playback with Loop enabled and never seeks while pausing', async () => {
+  it('plays from the playhead, starts Play range at the range, and never seeks while pausing', async () => {
     const bridge = makeFakeBridge();
     const nativeOrder: string[] = [];
     bridge.audioSeek.mockImplementation(async (milliseconds) => {
@@ -1307,23 +1237,17 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
-    await fireEvent.click(screen.getByRole('button', { name: 'Loop off' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Loop on' })).toBeInTheDocument());
-    bridge.audioSeek.mockClear();
-    bridge.audioPlay.mockClear();
-    bridge.audioPause.mockClear();
+    await waitFor(() => expect(startField()).toHaveValue('0:00.250'));
+    nativeOrder.length = 0;
 
     await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-    await waitFor(() => expect(nativeOrder).toEqual(['seek:250', 'play']));
+    await waitFor(() => expect(nativeOrder).toEqual(['play']));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
-    await waitFor(() => expect(nativeOrder).toEqual(['seek:250', 'play', 'pause']));
+    await waitFor(() => expect(nativeOrder).toEqual(['play', 'pause']));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-    await waitFor(() => expect(nativeOrder).toEqual([
-      'seek:250', 'play', 'pause', 'seek:250', 'play'
-    ]));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play range' }));
+    await waitFor(() => expect(nativeOrder).toEqual(['play', 'pause', 'seek:250', 'play']));
   });
 
   it('does not play replacement audio after a pending selection startup is invalidated', async () => {
@@ -1338,11 +1262,11 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
+    await waitFor(() => expect(startField()).toHaveValue('0:00.250'));
     bridge.audioSeek.mockClear();
     bridge.audioPlay.mockClear();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play range' }));
     await waitFor(() => expect(bridge.audioSeek).toHaveBeenCalledWith(250));
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(screen.getByText('new.wav')).toBeInTheDocument());
@@ -1368,7 +1292,7 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => paths.shift() ?? null } });
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 250, endMs: 600 });
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(250));
+    await waitFor(() => expect(startField()).toHaveValue('0:00.250'));
     bridge.audioSeek.mockImplementationOnce(async (milliseconds) => {
       await pendingSeek.promise;
       bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
@@ -1378,7 +1302,7 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open audio' }));
     await waitFor(() => expect(bridge.analyzeAudio).toHaveBeenCalledWith('new.wav'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play range' }));
     await waitFor(() => expect(bridge.audioSeek).toHaveBeenCalledWith(250));
     expect(bridge.audioPlay).not.toHaveBeenCalled();
 
@@ -1395,7 +1319,7 @@ describe('App', () => {
     expect(bridge.audioPlay).not.toHaveBeenCalled();
   });
 
-  it('ignores a Space playback input while toolbar selection startup is pending', async () => {
+  it('ignores a Space playback input while a Play range startup is pending', async () => {
     const bridge = makeFakeBridge();
     const pendingSeek = deferred<void>();
     bridge.audioSeek.mockImplementation(async (milliseconds) => {
@@ -1405,11 +1329,11 @@ describe('App', () => {
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 300, endMs: 700 });
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300));
+    await waitFor(() => expect(startField()).toHaveValue('0:00.300'));
     bridge.audioSeek.mockClear();
     bridge.audioPlay.mockClear();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play range' }));
     await waitFor(() => expect(bridge.audioSeek).toHaveBeenCalledTimes(1));
     const space = new KeyboardEvent('keydown', {
       code: 'Space', key: ' ', bubbles: true, cancelable: true
@@ -1425,63 +1349,54 @@ describe('App', () => {
     expect(bridge.audioSeek).toHaveBeenCalledTimes(1);
   });
 
-  it('restarts an active selection before playback from the Space shortcut', async () => {
+  it('plays from the current native position even when a range is marked', async () => {
     const bridge = makeFakeBridge();
-    const pendingSeek = deferred<void>();
-    const nativeOrder: string[] = [];
-    bridge.audioSeek.mockImplementation(async (milliseconds) => {
-      nativeOrder.push(`seek:${milliseconds}`);
-      await pendingSeek.promise;
-      bridge.snapshot = { ...bridge.snapshot, positionMs: milliseconds };
-    });
-    bridge.audioPlay.mockImplementation(async () => {
-      nativeOrder.push('play');
-      bridge.snapshot = { ...bridge.snapshot, state: 'playing' };
-    });
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 300, endMs: 700 });
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(300));
+    await waitFor(() => expect(startField()).toHaveValue('0:00.300'));
     bridge.audioSeek.mockClear();
     bridge.audioPlay.mockClear();
 
-    const space = new KeyboardEvent('keydown', {
-      code: 'Space', key: ' ', bubbles: true, cancelable: true
-    });
+    const space = new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true });
     window.dispatchEvent(space);
 
-    await waitFor(() => expect(nativeOrder).toEqual(['seek:300']));
-    expect(bridge.audioPlay).not.toHaveBeenCalled();
-    expect(space.defaultPrevented).toBe(true);
-
-    pendingSeek.resolve();
-    await waitFor(() => expect(nativeOrder).toEqual(['seek:300', 'play']));
-  });
-
-  it('plays from the current native position when no selection is active', async () => {
-    const bridge = makeFakeBridge();
-    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
-    await openClip();
-    bridge.audioSeek.mockClear();
-    bridge.audioPlay.mockClear();
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
-
     await waitFor(() => expect(bridge.audioPlay).toHaveBeenCalledTimes(1));
+    expect(space.defaultPrevented).toBe(true);
     expect(bridge.audioSeek).not.toHaveBeenCalled();
   });
 
-  it('does not play when seeking to the active selection fails', async () => {
+  it('moves the playhead where the waveform is clicked and to an annotation when it is opened', async () => {
+    const identity = fakeIdentity('clip.wav', 10_000);
+    const restored = createProject(identity);
+    restored.annotations = [{
+      ...restored.draft, id: 'saved', startMs: 4_000, endMs: 5_000, transcription: 'later',
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z'
+    }];
+    const bridge = makeFakeBridge({ identity, restored });
+    renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
+    await openClip();
+
+    waveformInteractions.latest!.onSeek(2_345);
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenLastCalledWith(2_345));
+    await fireEvent.click(rowFor(4_000, 'later'));
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenLastCalledWith(4_000));
+    waveformInteractions.latest!.onSelectionCreate({ startMs: 6_000, endMs: 7_000 });
+    await waitFor(() => expect(bridge.audioSeek).toHaveBeenLastCalledWith(6_000));
+    expect(screen.getByRole('heading', { name: 'New annotation' })).toBeInTheDocument();
+  });
+
+  it('does not play when seeking to the range fails', async () => {
     const bridge = makeFakeBridge();
     renderApp({ bridge, pickers: { ...nullPickers, audio: async () => 'clip.wav' } });
     await openClip();
     waveformInteractions.latest?.onSelectionChange({ startMs: 400, endMs: 800 });
-    await waitFor(() => expect(screen.getByLabelText('Start milliseconds')).toHaveValue(400));
+    await waitFor(() => expect(startField()).toHaveValue('0:00.400'));
     bridge.audioSeek.mockClear();
     bridge.audioPlay.mockClear();
     bridge.audioSeek.mockRejectedValueOnce(new Error('seek failed'));
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Play range' }));
 
     expect(await screen.findByRole('alert', { name: 'Application error' }))
       .toHaveTextContent('seek failed');
@@ -1510,12 +1425,13 @@ describe('App', () => {
     const snapshotsBeforeOut = bridge.audioSnapshot.mock.calls.length;
     await waitFor(() => expect(bridge.audioSnapshot.mock.calls.length).toBeGreaterThan(snapshotsBeforeOut));
     await fireEvent.keyDown(window, { key: 'o' });
-    expect(screen.getByLabelText('Start milliseconds')).toHaveValue(200);
-    expect(screen.getByLabelText('End milliseconds')).toHaveValue(350);
+    expect(startField()).toHaveValue('0:00.200');
+    expect(endField()).toHaveValue('0:00.350');
     await fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true });
     expect(bridge.audioSeek).toHaveBeenLastCalledWith(1_000);
     await fireEvent.keyDown(window, { key: 'Enter' });
     expect(bridge.audioPlay).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(screen.getByLabelText('Transcription'));
   });
 
   it('ignores shortcuts inside empty and plaintext-only contenteditable regions', async () => {

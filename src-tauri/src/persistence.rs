@@ -58,7 +58,6 @@ mod tests {
     "sampleRate": 48000,
     "channels": 2
   },
-  "displayFormat": "seconds",
   "speakers": [{ "id": "s1", "label": "Speaker one" }],
   "acousticTags": [{ "id": "tag1", "label": "noise" }],
   "annotations": [{
@@ -89,8 +88,7 @@ mod tests {
     "notes": "literal golden draft"
   },
   "activeAnnotationId": "a1",
-  "activeSelection": { "startMs": 100, "endMs": 200 },
-  "exportSettings": { "multilinePolicy": "quoted" }
+  "activeSelection": { "startMs": 100, "endMs": 200 }
 }
 "#;
 
@@ -105,7 +103,6 @@ mod tests {
     "sampleRate": 44100,
     "channels": 1
   },
-  "displayFormat": "clock",
   "speakers": [],
   "acousticTags": [],
   "annotations": [{
@@ -136,8 +133,7 @@ mod tests {
     "notes": ""
   },
   "activeAnnotationId": null,
-  "activeSelection": null,
-  "exportSettings": { "multilinePolicy": "escape" }
+  "activeSelection": null
 }
 "#;
 
@@ -224,26 +220,6 @@ mod tests {
             serde_json::from_str::<Confidence>(r#""low""#).unwrap(),
             Confidence::Low
         );
-        assert_eq!(
-            serde_json::from_str::<TimeDisplayFormat>(r#""seconds""#).unwrap(),
-            TimeDisplayFormat::Seconds
-        );
-        assert_eq!(
-            serde_json::from_str::<TimeDisplayFormat>(r#""clock""#).unwrap(),
-            TimeDisplayFormat::Clock
-        );
-        assert_eq!(
-            serde_json::from_str::<MultilinePolicy>(r#""escape""#).unwrap(),
-            MultilinePolicy::Escape
-        );
-        assert_eq!(
-            serde_json::from_str::<MultilinePolicy>(r#""space""#).unwrap(),
-            MultilinePolicy::Space
-        );
-        assert_eq!(
-            serde_json::from_str::<MultilinePolicy>(r#""quoted""#).unwrap(),
-            MultilinePolicy::Quoted
-        );
     }
 
     #[test]
@@ -258,7 +234,7 @@ mod tests {
         assert_eq!(project.schema_version, 1);
         assert_eq!(
             project.annotations[0].intelligibility,
-            Intelligibility::HighlyIntelligible
+            Some(Intelligibility::HighlyIntelligible)
         );
         save_project_to(&path, &project).unwrap();
 
@@ -272,6 +248,26 @@ mod tests {
         assert!(!std::fs::read_to_string(&path)
             .unwrap()
             .contains(r#""intelligible""#));
+    }
+
+    #[test]
+    fn legacy_fields_load_and_are_dropped_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-fields.json");
+        let golden: serde_json::Value = serde_json::from_str(GOLDEN_PROJECT_JSON).unwrap();
+        let mut legacy = golden.clone();
+        legacy["exportSettings"] = json!({ "multilinePolicy": "quoted" });
+        legacy["displayFormat"] = json!("clock");
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        let project = load_project_from(&path).unwrap();
+        save_project_to(&path, &project).unwrap();
+
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(saved.get("exportSettings").is_none());
+        assert!(saved.get("displayFormat").is_none());
+        assert_eq!(saved, golden);
     }
 
     #[test]
@@ -293,11 +289,11 @@ mod tests {
         let path = dir.path().join("project.json");
         let mut value = project();
         save_project_to(&path, &value).unwrap();
-        value.display_format = TimeDisplayFormat::Clock;
+        value.speakers[0].label = "speaker_2".into();
         save_project_to(&path, &value).unwrap();
         assert_eq!(
-            load_project_from(&path).unwrap().display_format,
-            TimeDisplayFormat::Clock
+            load_project_from(&path).unwrap().speakers[0].label,
+            "speaker_2"
         );
     }
 

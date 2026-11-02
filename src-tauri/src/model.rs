@@ -95,21 +95,6 @@ pub enum Confidence {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum TimeDisplayFormat {
-    Seconds,
-    Clock,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum MultilinePolicy {
-    Escape,
-    Space,
-    Quoted,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Annotation {
     pub id: String,
@@ -117,10 +102,10 @@ pub struct Annotation {
     pub end_ms: u64,
     pub event_type: EventType,
     pub transcription: String,
-    pub intelligibility: Intelligibility,
+    pub intelligibility: Option<Intelligibility>,
     pub speaker_id: Option<String>,
-    pub overlap: Overlap,
-    pub confidence: Confidence,
+    pub overlap: Option<Overlap>,
+    pub confidence: Option<Confidence>,
     pub acoustic_tag_ids: Vec<String>,
     pub notes: String,
     pub created_at: String,
@@ -134,18 +119,12 @@ pub struct AnnotationDraft {
     pub end_ms: u64,
     pub event_type: EventType,
     pub transcription: String,
-    pub intelligibility: Intelligibility,
+    pub intelligibility: Option<Intelligibility>,
     pub speaker_id: Option<String>,
-    pub overlap: Overlap,
-    pub confidence: Confidence,
+    pub overlap: Option<Overlap>,
+    pub confidence: Option<Confidence>,
     pub acoustic_tag_ids: Vec<String>,
     pub notes: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportSettings {
-    pub multiline_policy: MultilinePolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -153,14 +132,12 @@ pub struct ExportSettings {
 pub struct Project {
     pub schema_version: u32,
     pub audio_identity: AudioIdentity,
-    pub display_format: TimeDisplayFormat,
     pub speakers: Vec<LabelDefinition>,
     pub acoustic_tags: Vec<LabelDefinition>,
     pub annotations: Vec<Annotation>,
     pub draft: AnnotationDraft,
     pub active_annotation_id: Option<String>,
     pub active_selection: Option<Selection>,
-    pub export_settings: ExportSettings,
 }
 
 #[cfg(test)]
@@ -176,7 +153,6 @@ impl Project {
                 sample_rate: 48000,
                 channels: 1,
             },
-            display_format: TimeDisplayFormat::Seconds,
             speakers: vec![LabelDefinition {
                 id: "s1".into(),
                 label: "speaker_1".into(),
@@ -188,18 +164,15 @@ impl Project {
                 end_ms: 0,
                 event_type: EventType::Speech,
                 transcription: String::new(),
-                intelligibility: Intelligibility::HighlyIntelligible,
+                intelligibility: Some(Intelligibility::HighlyIntelligible),
                 speaker_id: Some("s1".into()),
-                overlap: Overlap::None,
-                confidence: Confidence::High,
+                overlap: Some(Overlap::None),
+                confidence: Some(Confidence::High),
                 acoustic_tag_ids: vec![],
                 notes: String::new(),
             },
             active_annotation_id: None,
             active_selection: None,
-            export_settings: ExportSettings {
-                multiline_policy: MultilinePolicy::Escape,
-            },
         }
     }
 }

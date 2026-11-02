@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createProject, DEFAULT_TAG_LABELS } from './project';
+import { createProject, YAMABIKO_TAGS } from './project';
 
 describe('createProject', () => {
   it('seeds editable speakers and tags', () => {
@@ -8,7 +8,7 @@ describe('createProject', () => {
       sampleRate: 48_000, channels: 1
     });
     expect(project.speakers.map((item) => item.label)).toEqual(['speaker_1', 'speaker_2', 'speaker_3']);
-    expect(project.acousticTags.map((item) => item.label)).toEqual([...DEFAULT_TAG_LABELS]);
+    expect(project.acousticTags.map((item) => item.label)).toEqual([...YAMABIKO_TAGS]);
     expect(project.draft.speakerId).toBe(project.speakers[0].id);
     expect(project.draft.intelligibility).toBe('highly_intelligible');
   });

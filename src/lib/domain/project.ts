@@ -1,11 +1,15 @@
 import type { AnnotationDraft, AudioIdentity, LabelDefinition, Project } from './types';
 
-export const DEFAULT_TAG_LABELS = [
+/** Yamabiko's closed acoustic-tag vocabulary (`references.py` ACOUSTIC_TAGS). */
+export const YAMABIKO_TAGS = [
   'quiet_dialogue', 'loud_dialogue', 'high_f0_nonmodal', 'overlap', 'music',
   'effects_noise', 'music_effects_noise', 'rapid_turns', 'short_acknowledgements',
   'long_endpoint', 'non_speech_control', 'background_speech', 'singing', 'laugh',
-  'breath', 'incomplete_word'
+  'breath', 'incomplete_word', 'code_switch', 'non_japanese_speech'
 ] as const;
+
+/** Yamabiko accepts only `speaker_<n>` labels for speech. */
+export const YAMABIKO_SPEAKER = /^speaker_[1-9][0-9]*$/;
 
 const label = (value: string): LabelDefinition => ({ id: crypto.randomUUID(), label: value });
 
@@ -22,14 +26,12 @@ export function createProject(audioIdentity: AudioIdentity): Project {
   return {
     schemaVersion: 1,
     audioIdentity,
-    displayFormat: 'seconds',
     speakers,
-    acousticTags: DEFAULT_TAG_LABELS.map(label),
+    acousticTags: YAMABIKO_TAGS.map(label),
     annotations: [],
     draft: { ...emptyDraft(), speakerId: speakers[0].id },
     activeAnnotationId: null,
-    activeSelection: null,
-    exportSettings: { multilinePolicy: 'escape' }
+    activeSelection: null
   };
 }
 
@@ -44,7 +46,12 @@ function requireUniqueLabel(
   if (normalized === 'none') throw new Error('The label none is reserved');
   const labelKind = kind === 'speakers' ? 'Speaker' : 'Acoustic tag';
   if (normalized.includes('\t')) throw new Error(`${labelKind} labels cannot contain tabs`);
-  if (kind === 'acousticTags' && normalized.includes(';')) throw new Error('Acoustic tag labels cannot contain semicolons');
+  if (kind === 'speakers' && !YAMABIKO_SPEAKER.test(normalized)) {
+    throw new Error('Speaker labels must be speaker_1, speaker_2, … for Yamabiko');
+  }
+  if (kind === 'acousticTags' && !(YAMABIKO_TAGS as readonly string[]).includes(normalized)) {
+    throw new Error(`Acoustic tags must be one of Yamabiko's tags: ${YAMABIKO_TAGS.join(', ')}`);
+  }
   if (items.some((item) => item.id !== exceptId && item.label === normalized)) throw new Error('Label must be unique');
   return normalized;
 }
